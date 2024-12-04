@@ -88,6 +88,10 @@ def base_eval list
   when :label
     throw "expected symbol for lvalue" unless list[1].is_a? Symbol
     $env[list[1]] = base_eval(list[2])
+  when :apply
+    base_eval([list[1]] + base_eval(list[2]))
+  when :eval
+    base_eval(base_eval(list[1]))
   when Fn
     list[0].run list[1..]
   when :plus
@@ -114,10 +118,17 @@ class Fn
   end
 
   def run args
+    return run_var(args) if @params.is_a? Symbol
     throw "arity mismatch: expected #{@params.count}, got #{args.count}" if args.count != @params.count
     evaluated_args = args.map{|arg| base_eval(arg) }
     param_to_arg = @params.zip(evaluated_args).to_h
     base_eval(substitute(@body, param_to_arg))
+  end
+
+  def run_var args
+    evaluated_args = args.map{|arg| base_eval(arg)}
+    s = substitute(@body, {@params => evaluated_args})
+    base_eval(s)
   end
 
   def substitute body, param_to_arg_map
