@@ -1,5 +1,5 @@
 # read takes a lisp string and converts it into a list data structure
-# base_eval takes a list data structure and evaluates it as code.
+# do_eval takes a list data structure and evaluates it as code.
 # There is a single environment and data can be saved to it using label.
 
 def do_read str
@@ -38,7 +38,7 @@ end
 
 $env = {}
 
-def base_eval list
+def do_eval list
   if list.is_a? Symbol
     if $env[list].nil?
       list
@@ -61,18 +61,18 @@ def base_eval list
       !list[1].is_a?(Array)
     end
   when :eq
-    list[1..].all? {|e| base_eval(e) == base_eval(list[1]) }
+    list[1..].all? {|e| do_eval(e) == do_eval(list[1]) }
   when :car
     if list.count != 2
       throw "ill-formed special form car"
     else
-      base_eval(list[1]).first
+      do_eval(list[1]).first
     end
   when :cdr
     if list.count != 2
       throw "ill-formed special form cdr"
     else
-      base_eval(list[1])[1..]
+      do_eval(list[1])[1..]
     end
   when :cons
     if list.count != 3
@@ -80,15 +80,15 @@ def base_eval list
     elsif !list[2].is_a?(Array)
       throw "tuples not supported!"
     else
-      [base_eval(list[1])] + base_eval(list[2])
+      [do_eval(list[1])] + do_eval(list[2])
     end
   when :if
     if list.count != 4
       throw "ill-formed special form if"
-    elsif base_eval(list[1])
-      base_eval(list[2])
+    elsif do_eval(list[1])
+      do_eval(list[2])
     else
-      base_eval(list[3])
+      do_eval(list[3])
     end
 
   when :lambda
@@ -96,19 +96,19 @@ def base_eval list
 
   when :label
     throw "expected symbol for lvalue" unless list[1].is_a? Symbol
-    $env[list[1]] = base_eval(list[2])
+    $env[list[1]] = do_eval(list[2])
   when :apply
-    base_eval([list[1]] + base_eval(list[2]))
+    do_eval([list[1]] + do_eval(list[2]))
 
   when :sub
-    base_eval(list[1]) - base_eval(list[2])
+    do_eval(list[1]) - do_eval(list[2])
   when :lt
-    base_eval(list[1]) < base_eval(list[2])
+    do_eval(list[1]) < do_eval(list[2])
   when Array
     if list.first.first == :lambda
       apply list[0], list[1..]
     else
-      base_eval([base_eval(list[0])] + list[1..])
+      do_eval([do_eval(list[0])] + list[1..])
     end
   when Symbol
     apply $env[list[0]], list[1..]
@@ -120,14 +120,14 @@ end
 def apply lambda_s, args
   params = lambda_s[1]
   body = lambda_s[2]
-  evaluated_args = args.map{|arg| base_eval(arg)}
+  evaluated_args = args.map{|arg| do_eval(arg)}
   if params.is_a? Symbol
     s = substitute(body, {params => evaluated_args})
-    base_eval(s)
+    do_eval(s)
   else
     throw "arity mismatch: expected #{params.count}, got #{args.count}" if args.count != params.count
     param_to_arg = params.zip(evaluated_args).to_h
-    base_eval(substitute(body, param_to_arg))
+    do_eval(substitute(body, param_to_arg))
   end
 end
 
@@ -180,7 +180,7 @@ end
   "(label papply (lambda args1 (lambda args2 (apply (car args1) (cat (cdr args1) args2)))))"
 
 
-                  ].map {|lisp_code| base_eval(read(lisp_code))}
+                  ].map {|lisp_code| do_eval(read(lisp_code))}
 
                   
                   
