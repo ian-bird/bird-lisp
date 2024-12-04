@@ -1,7 +1,6 @@
 # read takes a lisp string and converts it into a list data structure
 # do_eval takes a list data structure and evaluates it as code.
 # There is a single environment and data can be saved to it using label.
-
 def do_read str
   if str.nil? or str.empty? 
     nil
@@ -39,63 +38,26 @@ end
 $env = {}
 
 def do_eval list
-  if list.is_a? Symbol
-    if $env[list].nil?
-      list
-    else
-      $env[list]
-    end
-  end
+  ($env[list].nil? ? list : $env[list]) if list.is_a? Symbol
   return list unless list.is_a? Array
   case list.first
   when :quote
-    if list.count != 2
-      throw "ill-formed special form quote"
-    else
       list[1]
-    end
   when :atom
-    if list.count != 2
-      throw "ill-formed special form atom"
-    else
       !list[1].is_a?(Array)
-    end
   when :eq
     list[1..].all? {|e| do_eval(e) == do_eval(list[1]) }
   when :car
-    if list.count != 2
-      throw "ill-formed special form car"
-    else
       do_eval(list[1]).first
-    end
   when :cdr
-    if list.count != 2
-      throw "ill-formed special form cdr"
-    else
       do_eval(list[1])[1..]
-    end
   when :cons
-    if list.count != 3
-      throw "ill-formed special form cons"
-    elsif !list[2].is_a?(Array)
-      throw "tuples not supported!"
-    else
       [do_eval(list[1])] + do_eval(list[2])
-    end
   when :if
-    if list.count != 4
-      throw "ill-formed special form if"
-    elsif do_eval(list[1])
-      do_eval(list[2])
-    else
-      do_eval(list[3])
-    end
-
+    do_eval(list[1]) ? do_eval(list[2]) : do_eval(list[3])
   when :lambda
     list
-
   when :label
-    throw "expected symbol for lvalue" unless list[1].is_a? Symbol
     $env[list[1]] = do_eval(list[2])
   when :apply
     do_eval([list[1]] + do_eval(list[2]))
@@ -105,11 +67,7 @@ def do_eval list
   when :lt
     do_eval(list[1]) < do_eval(list[2])
   when Array
-    if list.first.first == :lambda
-      apply list[0], list[1..]
-    else
-      do_eval([do_eval(list[0])] + list[1..])
-    end
+    list.first.first == :lambda ? apply(list[0], list[1..]) : do_eval([do_eval(list[0])] + list[1..])
   when Symbol
     apply $env[list[0]], list[1..]
   else
