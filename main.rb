@@ -4,7 +4,7 @@
 
 def do_read str
   if str.nil? or str.empty? 
-    ""
+    nil
   elsif str.chars.first.match?(/\s/)
     do_read(str[1..])
   elsif str.chars.first == '"'
@@ -59,13 +59,13 @@ def base_eval list
     if list.count != 2
       throw "ill-formed special form car"
     else
-      list[1].first
+      base_eval(list[1]).first
     end
   when :cdr
     if list.count != 2
       throw "ill-formed special form cdr"
     else
-      list[1][1..]
+      base_eval(list[1])[1..]
     end
   when :cons
     if list.count != 3
@@ -73,7 +73,7 @@ def base_eval list
     elsif !list[2].is_a?(Array)
       throw "tuples not supported!"
     else
-      [list[1]] + list[2]
+      [base_eval(list[1])] + base_eval(list[2])
     end
   when :if
     if list.count != 4
@@ -124,7 +124,7 @@ class Fn
     if body.is_a? Array
       body.map{|val| substitute(val, param_to_arg_map)}
     elsif  param_to_arg_map.has_key? body
-      param_to_arg_map[body]
+      [:quote, param_to_arg_map[body]]
     else
       body
     end
