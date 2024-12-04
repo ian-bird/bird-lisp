@@ -90,16 +90,10 @@ def base_eval list
     $env[list[1]] = base_eval(list[2])
   when :apply
     base_eval([list[1]] + base_eval(list[2]))
-  when :eval
-    base_eval(base_eval(list[1]))
   when Fn
     list[0].run list[1..]
-  when :plus
-    base_eval(list[1]) + base_eval(list[2])
   when :sub
     base_eval(list[1]) - base_eval(list[2])
-  when :gt
-    base_eval(list[1]) > base_eval(list[2])
   when :lt
     base_eval(list[1]) < base_eval(list[2])
   when Array
@@ -141,3 +135,44 @@ class Fn
     end
   end
 end
+
+
+
+# core library
+[
+  "(label foldl (lambda 
+                  (f v coll) 
+                  (if (eq coll (quote ())) 
+                    v 
+                    (foldl f (f v (car coll)) (cdr coll)))))",
+
+  "(label plus (lambda(a b)(sub a (sub 0 b))))",
+
+  "(label add (lambda args (foldl plus 0 args)))",
+
+  "(label not (lambda(a)(if a #f #t)))",
+
+  "(label bor (lambda(a b)(if a #t b)))",
+
+  "(label or (lambda args (foldl bor #f args)))",
+
+  "(label band (lambda(a b)(if a b #f)))",
+
+  "(label and (lambda args (foldl band #t args)))",
+
+  "(label gt (lambda(a b)(not (or (lt a b) (eq a b)))))",
+
+  "(label gte (lambda(a b)(or (gt a b) (eq a b))))",
+
+  "(label lte (lambda(a b)(or (lt a b) (eq a b))))",
+
+  "(label reverse (lambda(coll)(foldl (lambda(a b)(cons b a)) (quote ()) coll)))",
+
+  "(label foldr (lambda(f v coll)(foldl (lambda(a b)(f b a)) v (reverse coll))))",
+
+  "(label map (lambda(f coll)(foldr (lambda(e acc)(cons (f e) acc)) (quote ()) coll)))"
+
+
+                  ].map {|lisp_code| base_eval(read(lisp_code))}
+
+                  
