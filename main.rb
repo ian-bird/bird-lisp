@@ -1,3 +1,6 @@
+# read takes a lisp string and converts it into a list data structure
+# base_eval takes a list data structure and evaluates it as code.
+# There is a single environment and data can be saved to it using label.
 
 def do_read str
   if str.nil? or str.empty? 
