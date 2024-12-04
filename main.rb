@@ -39,6 +39,13 @@ end
 $env = {}
 
 def base_eval list
+  if list.is_a? Symbol
+    if $env[list].nil?
+      list
+    else
+      $env[list]
+    end
+  end
   return list unless list.is_a? Array
   case list.first
   when :quote
@@ -83,60 +90,56 @@ def base_eval list
     else
       base_eval(list[3])
     end
+
   when :lambda
-    Fn.new list[1], list[2]
+    list
+
   when :label
     throw "expected symbol for lvalue" unless list[1].is_a? Symbol
     $env[list[1]] = base_eval(list[2])
   when :apply
     base_eval([list[1]] + base_eval(list[2]))
-  when Fn
-    list[0].run list[1..]
+
   when :sub
     base_eval(list[1]) - base_eval(list[2])
   when :lt
     base_eval(list[1]) < base_eval(list[2])
   when Array
-    base_eval([base_eval(list[0])] + list[1..])
+    if list.first.first == :lambda
+      apply list[0], list[1..]
+    else
+      base_eval([base_eval(list[0])] + list[1..])
+    end
   when Symbol
-    $env[list[0]].run list[1..]
+    apply $env[list[0]], list[1..]
   else
     throw "unknown form #{list}"
   end
 end
 
-class Fn
-  def initialize params, body
-    @params = params
-    @body = body
-  end
-
-  def run args
-    return run_var(args) if @params.is_a? Symbol
-    throw "arity mismatch: expected #{@params.count}, got #{args.count}" if args.count != @params.count
-    evaluated_args = args.map{|arg| base_eval(arg) }
-    param_to_arg = @params.zip(evaluated_args).to_h
-    base_eval(substitute(@body, param_to_arg))
-  end
-
-  def run_var args
-    evaluated_args = args.map{|arg| base_eval(arg)}
-    s = substitute(@body, {@params => evaluated_args})
+def apply lambda_s, args
+  params = lambda_s[1]
+  body = lambda_s[2]
+  evaluated_args = args.map{|arg| base_eval(arg)}
+  if params.is_a? Symbol
+    s = substitute(body, {params => evaluated_args})
     base_eval(s)
-  end
-
-  def substitute body, param_to_arg_map
-    if body.is_a? Array
-      body.map{|val| substitute(val, param_to_arg_map)}
-    elsif  param_to_arg_map.has_key? body
-      [:quote, param_to_arg_map[body]]
-    else
-      body
-    end
+  else
+    throw "arity mismatch: expected #{params.count}, got #{args.count}" if args.count != params.count
+    param_to_arg = params.zip(evaluated_args).to_h
+    base_eval(substitute(body, param_to_arg))
   end
 end
 
-
+def substitute body, param_to_arg_map
+  if body.is_a? Array
+    body.map{|val| substitute(val, param_to_arg_map)}
+  elsif  param_to_arg_map.has_key? body
+    [:quote, param_to_arg_map[body]]
+  else
+    body
+  end
+end
 
 # core library
 [
@@ -170,9 +173,14 @@ end
 
   "(label foldr (lambda(f v coll)(foldl (lambda(a b)(f b a)) v (reverse coll))))",
 
-  "(label map (lambda(f coll)(foldr (lambda(e acc)(cons (f e) acc)) (quote ()) coll)))"
+  "(label map (lambda(f coll)(foldr (lambda(e acc)(cons (f e) acc)) (quote ()) coll)))",
+
+  "(label cat (lambda(l1 l2)(foldr cons l2 l1)))",
+
+  "(label papply (lambda args1 (lambda args2 (apply (car args1) (cat (cdr args1) args2)))))"
 
 
                   ].map {|lisp_code| base_eval(read(lisp_code))}
 
+                  
                   
