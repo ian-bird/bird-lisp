@@ -110,9 +110,9 @@
 				 #t
 				 args))))
 
-(define (walk operation code)
-    (cond ((operation code) (operation code))
-	  (else (map (partial walk operation) code))))
+(define (walk before after code)
+    (cond ((before code) (before code))
+	  (else (after (map (partial walk before after) code)))))
 
 (define (any? f coll)
     (apply or (map f coll)))
@@ -175,7 +175,9 @@
        (if (operation (car coll) (car (cdr coll)))
 	   (operation (car coll) (car (cdr coll)))
 	   (car coll))
-       (replace-subseq-2 operation (cdr coll)))))
+       (if (operation (car coll) (car (cdr coll)))
+	   (replace-subseq-2 operation (cdr (cdr coll)))
+	   (replace-subseq-2 operation (cdr coll))))))
 
 (define (subseq-post-walk-2 operation coll)
     (if (atom? coll)
@@ -185,21 +187,63 @@
 	 (map (partial subseq-post-walk-2 operation)
 	      coll))))
 
-;; (`    (      lambda (,    (car (car bindings)) (              let ,(cdr bindings) ,@ body))) (car (cdr (car bindings))))
+
+(define (alist coll)
+    (if (even? (count coll))
+	(map (partial apply cons) (partition 2 2 coll))
+	'()))
+
+(define (get m k)
+    (cond ((nil? m) '())
+	  ((eq? (car (car m)) k) (cdr (car m)))
+	  (else (get (cdr m) k))))
+
+(define (nth coll index)
+    (car (drop index coll)))
+
+(define (update m k f)
+    (cons (cons k (f (get m k)))
+	  m))
+
+(define (constantly x) (lambda (_) x))
+
+(define (unassoc m k)
+    (filter (lambda (pair) (not (eq? (car pair) k)))
+	    m))
+
+;; (`    (      LAMBDA (,    (car (car bindings)) (              let ,(cdr bindings) ,@ body))) (car (cdr (car bindings))))
 ;; to
 ;; (list (list 'lambda (list (car (car bindings)) (append (list 'let (cdr bindings)) body)))    (car (cdr (car bindings))))
-;; 
+;;
+;; splicing unquote can go straight in.
+;; (' ,@ (map (partial + 1) '(1 2 3)))
+;; becomes
+;; (append (map (partial + 1) '(1 2 3)))
+;;
+;; single unquote needs to be in a list to avoid expanding
+;; (' , (+ 1 2))
+;; becomes
+;; (append (list (+ 1 2)))
+;;
+;; elements without any quoting need a quote added in addition to list
+;; (' lambda)
+;; becomes
+;; (append (list (quote lambda)))
 (define ` (macro quoted-elements
 		 (let ((unquoted? (lambda (a b) (if (eq? ', a) (list 'unquote  b) #f)))
-		       (splicing-unquoted? (lambda (a b) (if (eq?  ',@ a) (list 'splicing-unqote b) #f)))
+		       (splicing-unquoted? (lambda (a b) (if (eq?  ',@ a) (list 'splicing-unquote b) #f)))
 		       (auto-gensym? (lambda (a b) (if (eq? '# b) (list 'auto-gensym a) #f)))
 		       (first-pass (subseq-post-walk-2 auto-gensym?
 						      (subseq-post-walk-2 splicing-unquoted?
 									  (subseq-post-walk-2 unquoted? quoted-elements)))))
-		   (list 'quote (walk (lambda (element)
-				       (cond ((atom? element) (list 'quote element))
-					     ((eq? (car element) 'unquote) (list (cdr element)))
-					     ((eq? (car element) 'splicing-unquote) (cdr element))
-					     (else #f)))
-				      first-pass)))))
-
+		   (car (cdr
+			 (walk (lambda (element)
+				     (cond ((atom? element) (list 'list (list 'quote element)))
+					   ((eq? (car element) 'unquote) (cons 'list (cdr element)))
+					   ((eq? (car element) 'splicing-unquote) (car (cdr element)))
+					   ((eq? (car element) 'auto-gensym) (car (cdr element)))
+					   (else #f)))
+				   (lambda (element)
+				     (cond ((atom? element) element)
+					   (else (list 'list (cons 'append element)))))
+				   first-pass))))))
