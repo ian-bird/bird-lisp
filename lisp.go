@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bufio"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 )
 
@@ -40,10 +42,13 @@ type Frame struct {
 	bindings map[string]Value // its bindings
 }
 
+var gensymCounter = 0
+
 func toArray(value Value) []Value {
 	result := make([]Value, 0)
-	for value.Type == ConsCell {
+	for value.Cdr != nil {
 		result = append(result, *value.Car)
+		value = *value.Cdr
 	}
 	return result
 }
@@ -80,6 +85,26 @@ func areEqual(a, b Value) bool {
 	return true
 }
 
+func getBindings(frame Frame) map[string]Value {
+	bindings := make(map[string]Value)
+	if frame.parent != nil {
+		bindings = getBindings(*frame.parent)
+	}
+	for k, v := range frame.bindings {
+		bindings[k] = v
+	}
+	return bindings
+}
+
+func printFrame(frame Frame) string {
+	bindings := getBindings(frame)
+	result := ""
+	for k, v := range bindings {
+		result = fmt.Sprintf("%v%v => %v\n", result, k, Print(v))
+	}
+	return result
+}
+
 // applies a function or a macro
 func apply(fn Value, args []Value, frame Frame) (Value, Frame, error) {
 	nilValue := Value{
@@ -90,25 +115,44 @@ func apply(fn Value, args []Value, frame Frame) (Value, Frame, error) {
 	}
 	fnStatements := toArray(fn)
 	params := fnStatements[0]
-	newFrame := Frame{
-		bindings: make(map[string]Value, 0),
-		parent:   &frame,
+
+	// we need to check lexical variables (i.e. ones bound when the lambda / macro was created)
+	// before we check dynamically bound ones. However, we need to bind arguments before that, too
+	// so we'll place the arg frame at the bottom, link it upwards to the lexical bindings
+	// and then link those to the dynamic bindings passed in.
+	// we'll then defer unlinking the lexical bindings so that the dynamic ones don't persist.
+	lexBaseFrame := fn.Value.(Frame)
+	lexTopFrame := &lexBaseFrame
+	for lexTopFrame.parent != nil {
+		lexTopFrame = lexTopFrame.parent
 	}
+	lexTopFrame.parent = &frame
+	defer func() { lexTopFrame.parent = nil }()
+
+	argFrame := Frame{
+		bindings: make(map[string]Value, 0),
+		parent:   &lexBaseFrame,
+	}
+
 	if params.Type == ConsCell {
 		paramsList := toArray(params)
 		if len(paramsList) != len(args) {
-			return nilValue, frame, errors.New("wrong number of arguments passed")
+			return nilValue, frame, errors.New(fmt.Sprintf("apply %v: wrong number of arguments passed", fn))
 		}
-		for i, _ := range paramsList {
-			newFrame.bindings[paramsList[i].Value.(string)] = args[i]
+		for i := range paramsList {
+			argFrame.bindings[paramsList[i].Value.(string)] = args[i]
+		}
+	} else if params.Type == Nil {
+		if len(args) != 0 {
+			return nilValue, frame, errors.New(fmt.Sprintf("apply %v: wrong number of arguments passed", fn))
 		}
 	} else {
-		newFrame.bindings[params.Value.(string)] = toList(args)
+		argFrame.bindings[params.Value.(string)] = toList(args)
 	}
 	var result Value
 	for _, toEvaluate := range fnStatements[1:] {
 		var err error
-		result, _, err = Eval(toEvaluate, newFrame)
+		result, argFrame, err = Eval(toEvaluate, argFrame)
 		if err != nil {
 			return nilValue, frame, err
 		}
@@ -117,7 +161,7 @@ func apply(fn Value, args []Value, frame Frame) (Value, Frame, error) {
 }
 
 // looks up the binding definition for a symbol
-func lookup(frame Frame, value Value) Value {
+func lookup(frame Frame, value Value) (Value, error) {
 	nilValue := Value{
 		Car:   nil,
 		Cdr:   nil,
@@ -126,7 +170,7 @@ func lookup(frame Frame, value Value) Value {
 	}
 
 	if value.Type != Symbol {
-		return nilValue
+		return nilValue, errors.New(fmt.Sprintf("lookup: cannot look up value for non-symbol '%v'", value))
 	}
 
 	v, ok := frame.bindings[value.Value.(string)]
@@ -135,12 +179,12 @@ func lookup(frame Frame, value Value) Value {
 	// check the ones above it
 	if !ok {
 		if frame.parent == nil {
-			return nilValue
+			return nilValue, errors.New(fmt.Sprintf("lookup: no binding found for symbol '%v'", value))
 		}
 		return lookup(*frame.parent, value)
 	}
 
-	return v
+	return v, nil
 }
 
 // creates a new top level frame with default
@@ -157,18 +201,40 @@ func NewTopLevelFrame() Frame {
 	return Frame{
 		parent: nil,
 		bindings: map[string]Value{
-			"atom?":  newSpecialForm("atom?"),
-			"car":    newSpecialForm("car"),
-			"cdr":    newSpecialForm("cdr"),
-			"cond":   newSpecialForm("cond"),
-			"cons":   newSpecialForm("cons"),
-			"label":  newSpecialForm("label"),
-			"lambda": newSpecialForm("lambda"),
-			"macro":  newSpecialForm("macro"),
-			"eq?":    newSpecialForm("eq?"),
-			"quote":  newSpecialForm("quote"),
+			"atom?":     newSpecialForm("atom?"),
+			"car":       newSpecialForm("car"),
+			"cdr":       newSpecialForm("cdr"),
+			"cond":      newSpecialForm("cond"),
+			"cons":      newSpecialForm("cons"),
+			"label":     newSpecialForm("label"),
+			"lambda":    newSpecialForm("lambda"),
+			"macro":     newSpecialForm("macro"),
+			"eq?":       newSpecialForm("eq?"),
+			"quote":     newSpecialForm("quote"),
+			">":         newSpecialForm(">"),
+			"+":         newSpecialForm("+"),
+			"-":         newSpecialForm("-"),
+			"*":         newSpecialForm("*"),
+			"/":         newSpecialForm("/"),
+			"%":         newSpecialForm("%"),
+			"char-list": newSpecialForm("char-list"),
+			"println":   newSpecialForm("println"),
+			"gensym":    newSpecialForm("gensym"),
 		},
 	}
+}
+
+func copyFrames(frame Frame) Frame {
+	frameCopy := new(Frame)
+	baseFrame := frameCopy
+	*frameCopy = frame
+	for frame.parent != nil {
+		frame = *frame.parent
+		frameCopy.parent = new(Frame)
+		frameCopy = frameCopy.parent
+		*frameCopy = frame
+	}
+	return *baseFrame
 }
 
 func Eval(toEvaluate Value, frame Frame) (Value, Frame, error) {
@@ -178,6 +244,12 @@ func Eval(toEvaluate Value, frame Frame) (Value, Frame, error) {
 		Type:  Nil,
 		Value: nil,
 	}
+	passUpError := func(err error) error {
+		return errors.New(fmt.Sprintf("eval %v:\n %v", Print(toEvaluate), err.Error()))
+	}
+	newError := func(errVal string) error {
+		return passUpError(errors.New(fmt.Sprintf("env:\n%verror:%v", printFrame(frame), errVal)))
+	}
 	switch toEvaluate.Type {
 	case String:
 		return toEvaluate, frame, nil
@@ -186,26 +258,37 @@ func Eval(toEvaluate Value, frame Frame) (Value, Frame, error) {
 	case Boolean:
 		return toEvaluate, frame, nil
 	case Symbol:
-		return lookup(frame, toEvaluate), frame, nil
+		lookedUpVal, err := lookup(frame, toEvaluate)
+		if err != nil {
+			return nilValue, frame, passUpError(err)
+		}
+		return lookedUpVal, frame, nil
 	case Nil:
 		return nilValue, frame, nil
+	case Function:
+		return toEvaluate, frame, nil
+	case Macro:
+		return toEvaluate, frame, nil
 	case ConsCell:
 		listElements := toArray(toEvaluate)
-		firstThing, _, err := Eval(listElements[0], frame)
+		var firstThing Value
+		var err error
+		firstThing, frame, err = Eval(listElements[0], frame)
 		arguments := listElements[1:]
 		if err != nil {
-			return nilValue, frame, err
+			return nilValue, frame, passUpError(err)
 		}
 		switch firstThing.Type {
 		case SpecialForm:
 			switch firstThing.Value.(string) {
 			case "atom?":
 				if len(arguments) != 1 {
-					return nilValue, frame, errors.New("wrong number of arguments passed to atom?")
+					return nilValue, frame, newError("wrong number of arguments passed to atom?")
 				}
-				evaluatedArg, _, err := Eval(arguments[0], frame)
+				var evaluatedArg Value
+				evaluatedArg, frame, err = Eval(arguments[0], frame)
 				if err != nil {
-					return nilValue, frame, err
+					return nilValue, frame, passUpError(err)
 				}
 				return Value{
 					Car:  nil,
@@ -217,57 +300,61 @@ func Eval(toEvaluate Value, frame Frame) (Value, Frame, error) {
 				}, frame, nil
 			case "car":
 				if len(arguments) != 1 {
-					return nilValue, frame, errors.New("wrong number of arguments passed to car")
+					return nilValue, frame, newError("eval: wrong number of arguments passed to car")
 				}
-				evaluatedArg, _, err := Eval(arguments[0], frame)
+				var evaluatedArg Value
+				evaluatedArg, frame, err = Eval(arguments[0], frame)
 				if err != nil {
-					return nilValue, frame, err
+					return nilValue, frame, passUpError(err)
 				}
 				if evaluatedArg.Type != ConsCell {
-					return nilValue, frame, errors.New("car expected PAIR")
+					return nilValue, frame, newError("car expected PAIR")
 				}
 				return *evaluatedArg.Car, frame, nil
 			case "cdr":
 				if len(arguments) != 1 {
-					return nilValue, frame, errors.New("wrong number of arguments passed to cdr")
+					return nilValue, frame, newError("wrong number of arguments passed to cdr")
 				}
-				evaluatedArg, _, err := Eval(arguments[0], frame)
+				var evaluatedArg Value
+				evaluatedArg, frame, err = Eval(arguments[0], frame)
 				if err != nil {
-					return nilValue, frame, err
+					return nilValue, frame, passUpError(err)
 				}
 				if evaluatedArg.Type != ConsCell {
-					return nilValue, frame, errors.New("cdr expected PAIR")
+					return nilValue, frame, newError("cdr expected PAIR")
 				}
 				return *evaluatedArg.Cdr, frame, nil
 			case "cond":
 				if len(arguments) < 1 {
-					return nilValue, frame, errors.New("wrong number of arguments passed to cond")
+					return nilValue, frame, newError("wrong number of arguments passed to cond")
 				}
 				for i, currentBranch := range arguments {
 					branchList := toArray(currentBranch)
 					if branchList[0].Type == Symbol && branchList[0].Value == "else" {
 						if i+1 != len(arguments) {
-							return nilValue, frame, errors.New("else clause must be last in cond statement")
+							return nilValue, frame, newError("else clause must be last in cond statement")
 						}
 						var result Value
 						for _, toEvaluate := range branchList[1:] {
-							result, _, err = Eval(toEvaluate, frame)
+							result, frame, err = Eval(toEvaluate, frame)
 							if err != nil {
-								return nilValue, frame, err
+								return nilValue, frame, passUpError(err)
 							}
 						}
 						return result, frame, nil
 					}
-					predicate, _, err := Eval(branchList[0], frame)
+					var predicate Value
+					predicate, frame, err = Eval(branchList[0], frame)
 					if err != nil {
-						return nilValue, frame, err
+						return nilValue, frame, passUpError(err)
 					}
-					if predicate.Type == Boolean && !predicate.Value.(bool) {
+					if (predicate.Type == Boolean && predicate.Value.(bool)) ||
+						(predicate.Type != Boolean && predicate.Type != Nil) {
 						var result Value
 						for _, toEvaluate := range branchList[1:] {
-							result, _, err = Eval(toEvaluate, frame)
+							result, frame, err = Eval(toEvaluate, frame)
 							if err != nil {
-								return nilValue, frame, err
+								return nilValue, frame, passUpError(err)
 							}
 						}
 						return result, frame, nil
@@ -276,13 +363,14 @@ func Eval(toEvaluate Value, frame Frame) (Value, Frame, error) {
 				return nilValue, frame, nil
 			case "cons":
 				if len(arguments) != 2 {
-					return nilValue, frame, errors.New("wrong number of arguments passed to cons")
+					return nilValue, frame, newError("wrong number of arguments passed to cons")
 				}
 				evaluatedArgs := make([]Value, 0)
 				for _, arg := range arguments {
-					evaluatedArg, _, err := Eval(arg, frame)
+					var evaluatedArg Value
+					evaluatedArg, frame, err = Eval(arg, frame)
 					if err != nil {
-						return nilValue, frame, err
+						return nilValue, frame, passUpError(err)
 					}
 					evaluatedArgs = append(evaluatedArgs, evaluatedArg)
 				}
@@ -294,13 +382,14 @@ func Eval(toEvaluate Value, frame Frame) (Value, Frame, error) {
 				}, frame, nil
 			case "eq?":
 				if len(arguments) != 2 {
-					return nilValue, frame, errors.New("wrong number of arguments passed to eq?")
+					return nilValue, frame, newError("wrong number of arguments passed to eq?")
 				}
 				evaluatedArgs := make([]Value, 0)
 				for _, arg := range arguments {
-					evaluatedArg, _, err := Eval(arg, frame)
+					var evaluatedArg Value
+					evaluatedArg, frame, err = Eval(arg, frame)
 					if err != nil {
-						return nilValue, frame, err
+						return nilValue, frame, passUpError(err)
 					}
 					evaluatedArgs = append(evaluatedArgs, evaluatedArg)
 				}
@@ -314,14 +403,15 @@ func Eval(toEvaluate Value, frame Frame) (Value, Frame, error) {
 				}, frame, nil
 			case "label":
 				if len(arguments) != 2 {
-					return nilValue, frame, errors.New("wrong number of arguments passed to label")
+					return nilValue, frame, newError("wrong number of arguments passed to label")
 				}
 				if arguments[0].Type != Symbol {
-					return nilValue, frame, errors.New("label expected identifier")
+					return nilValue, frame, newError("label expected identifier")
 				}
-				toBind, _, err := Eval(arguments[1], frame)
+				var toBind Value
+				toBind, frame, err = Eval(arguments[1], frame)
 				if err != nil {
-					return nilValue, frame, err
+					return nilValue, frame, passUpError(err)
 				}
 				nextFrame := Frame{
 					parent:   frame.parent,
@@ -334,71 +424,193 @@ func Eval(toEvaluate Value, frame Frame) (Value, Frame, error) {
 				return nilValue, nextFrame, nil
 			case "lambda":
 				if len(arguments) < 2 {
-					return nilValue, frame, errors.New("lambda is ill-formed")
+					return nilValue, frame, newError("lambda is ill-formed")
 				}
 				return Value{
-					Car:   toEvaluate.Cdr.Car,
-					Cdr:   toEvaluate.Cdr.Cdr,
+					Car:   toEvaluate.Cdr.Car, // store arguments
+					Cdr:   toEvaluate.Cdr.Cdr, // store body
 					Type:  Function,
-					Value: nil,
+					Value: copyFrames(frame), // store lexical bindings
 				}, frame, nil
 			case "macro":
 				if len(arguments) < 2 {
-					return nilValue, frame, errors.New("lambda is ill-formed")
+					return nilValue, frame, newError("macro is ill-formed")
 				}
 				return Value{
-					Car:   toEvaluate.Cdr.Car,
-					Cdr:   toEvaluate.Cdr.Cdr,
+					Car:   toEvaluate.Cdr.Car, // store arguments
+					Cdr:   toEvaluate.Cdr.Cdr, // store body
 					Type:  Macro,
-					Value: nil,
+					Value: copyFrames(frame), // store lexical bindings
 				}, frame, nil
 			case "quote":
 				if len(arguments) != 1 {
-					return nilValue, frame, errors.New("wrong number of arguments passed to quote")
+					return nilValue, frame, newError("wrong number of arguments passed to quote")
 				}
 				return arguments[0], frame, nil
+			case "+", "-", "*", "/", "%":
+				if len(arguments) < 2 {
+					return nilValue, frame, newError("wrong number of arguments passed to arithmetic operator")
+				}
+				evaluatedArguments := make([]Value, 0)
+				for _, arg := range arguments {
+					var evaluatedArg Value
+					evaluatedArg, frame, err = Eval(arg, frame)
+					if err != nil {
+						return nilValue, frame, passUpError(err)
+					}
+					evaluatedArguments = append(evaluatedArguments, evaluatedArg)
+					if evaluatedArguments[len(evaluatedArguments)-1].Type != Number {
+						return nilValue, frame, newError("cannot use non-numeric values for arithmetic")
+					}
+				}
+				lValue := evaluatedArguments[0].Value.(float64)
+				for _, rValue := range evaluatedArguments[1:] {
+					rNum := rValue.Value.(float64)
+					switch firstThing.Value.(string) {
+					case "+":
+						lValue += rNum
+					case "-":
+						lValue -= rNum
+					case "*":
+						lValue *= rNum
+					case "/":
+						lValue /= rNum
+					case "%":
+						lValue = lValue - float64(int(lValue/rNum))*rNum
+					}
+				}
+				return Value{
+					Car:   nil,
+					Cdr:   nil,
+					Type:  Number,
+					Value: lValue,
+				}, frame, nil
+			case "char-list":
+				if len(arguments) != 1 {
+					return nilValue, frame, newError("wrong number of arguments passed to char-list")
+				}
+				if arguments[0].Type != String {
+					return nilValue, frame, newError("cannot use non-string value for char-list")
+				}
+				chars := make([]Value, 0)
+				for _, c := range arguments[0].Value.(string) {
+					chars = append(chars, Value{
+						Car:   nil,
+						Cdr:   nil,
+						Type:  String,
+						Value: c,
+					})
+				}
+				return toList(chars), frame, nil
+			case ">":
+				if len(arguments) < 2 {
+					return nilValue, frame, newError("wrong number of arguments passed to >")
+				}
+				evaluatedArguments := make([]Value, 0)
+				for _, arg := range arguments {
+					var evaluatedArg Value
+					evaluatedArg, frame, err = Eval(arg, frame)
+					if err != nil {
+						return nilValue, frame, passUpError(err)
+					}
+					evaluatedArguments = append(evaluatedArguments, evaluatedArg)
+					if evaluatedArguments[len(evaluatedArguments)-1].Type != Number {
+						return nilValue, frame, newError("cannot use non-numeric values for >")
+					}
+				}
+				allGood := true
+				for i := 1; i < len(evaluatedArguments); i++ {
+					if evaluatedArguments[i-1].Value.(float64) <= evaluatedArguments[i].Value.(float64) {
+						allGood = false
+					}
+				}
+				return Value{
+					Car:   nil,
+					Cdr:   nil,
+					Type:  Boolean,
+					Value: allGood,
+				}, frame, nil
+			case "println":
+				evaluatedArguments := make([]Value, 0)
+				for _, arg := range arguments {
+					var evaluatedArg, frame, err = Eval(arg, frame)
+					if err != nil {
+						return nilValue, frame, passUpError(err)
+					}
+					evaluatedArguments = append(evaluatedArguments, evaluatedArg)
+				}
+				for _, arg := range evaluatedArguments {
+					Print(arg)
+				}
+				return nilValue, frame, nil
+			case "gensym":
+				if len(arguments) != 0 {
+					return nilValue, frame, newError("wrong number of args passed to gensym")
+				}
+				result := Value{
+					Car:   nil,
+					Cdr:   nil,
+					Type:  Symbol,
+					Value: fmt.Sprintf("G#%v", gensymCounter),
+				}
+				gensymCounter++
+				return result, frame, nil
 			}
 		case Macro:
-			applyResult, _, err := apply(firstThing, arguments, frame)
+			applyResult, frame, err := apply(firstThing, arguments, frame)
 			if err != nil {
-				return nilValue, frame, err
+				return nilValue, frame, passUpError(err)
 			}
 			return Eval(applyResult, frame)
 		case Function:
 			evaluatedArgs := make([]Value, 0)
 			for _, arg := range arguments {
-				evaluatedArg, _, err := Eval(arg, frame)
+				var evaluatedArg Value
+				evaluatedArg, frame, err = Eval(arg, frame)
 				if err != nil {
-					return nilValue, frame, err
+					return nilValue, frame, passUpError(err)
 				}
 				evaluatedArgs = append(evaluatedArgs, evaluatedArg)
 			}
 			return apply(firstThing, evaluatedArgs, frame)
 		default:
-			return nilValue, frame, errors.New("First argument in call must be a function, macro or special form")
+			return nilValue, frame, newError("first argument in call must be a function, macro or special form")
 		}
 	default:
-		return nilValue, frame, errors.New("unknown value type")
+		return nilValue, frame, newError("unknown value type")
 	}
 
 	panic("fell through default case on Eval function")
 }
 
+// reads a list in and creates a new value for it
+// read list will call read repeatedly as it traverses
+// its contents, until it hits a closing parens.
 func readList(s string) (string, Value, error) {
 	thisList := make([]Value, 0)
 	remainingString := s
 	appendAtom := false
+	thingsToRightOfDot := -1
 	for remainingString != "" {
 		var nextValue Value
 		var err error
 		remainingString, nextValue, err = Read(remainingString)
 		if err != nil {
+			// this error occurs when we get to the end of the list
 			if err.Error() == "unexpected ')'" {
 				asList := toList(thisList)
 				listTraverser := &asList
 				// if append atom is true, go to the last cons cell,
 				// the one whose cdr is null. Replace this with the
 				// car of that cons cell.
+				if appendAtom && thingsToRightOfDot != 1 {
+					return remainingString, Value{
+						Car:   nil,
+						Cdr:   nil,
+						Type:  Nil,
+						Value: nil,
+					}, errors.New("improperly placed . ")
+				}
 				if appendAtom {
 					for listTraverser.Cdr.Type == ConsCell {
 						listTraverser = listTraverser.Cdr
@@ -409,6 +621,10 @@ func readList(s string) (string, Value, error) {
 					listTraverser.Cdr = nil
 				}
 				return remainingString, asList, nil
+				// when we encounter a .
+				// we only want to see one ., and it needs to be
+				// right before the last element. If it isn't,
+				// we're going to generate an improperly placed . error
 			} else if err.Error() == "unexpected '.'" {
 				if appendAtom {
 					return remainingString, Value{
@@ -416,19 +632,34 @@ func readList(s string) (string, Value, error) {
 						Cdr:   nil,
 						Type:  Nil,
 						Value: nil,
-					}, errors.New("improperly placed .")
+					}, errors.New("improperly placed . ")
 				}
 				appendAtom = true
+				// else this isn't an error we can catch, so propogate it up
+			} else {
+				return remainingString, Value{
+					Car:   nil,
+					Cdr:   nil,
+					Type:  Nil,
+					Value: nil,
+				}, err
 			}
+		}
+		if appendAtom {
+			thingsToRightOfDot++
+		}
+		if thingsToRightOfDot > 1 {
 			return remainingString, Value{
 				Car:   nil,
 				Cdr:   nil,
 				Type:  Nil,
 				Value: nil,
-			}, err
+			}, errors.New("improperly placed . ")
 		}
 		thisList = append(thisList, nextValue)
 	}
+	// if we didnt return early and hit the end of the string,
+	// then there was no matching closing parens and we need to generate an error
 	return "", Value{
 		Car:   nil,
 		Cdr:   nil,
@@ -437,6 +668,7 @@ func readList(s string) (string, Value, error) {
 	}, errors.New("could not find matching closing parens")
 }
 
+// read a string in and create a new atom for it
 func readString(s string) (string, Value, error) {
 	escape := false
 	result := ""
@@ -478,11 +710,12 @@ func readString(s string) (string, Value, error) {
 	}, errors.New("could not find matching closing double quote")
 }
 
+// read a number in and create a new symbol for it
 func readNumber(s string) (string, Value, error) {
 	var result float64
 	fmt.Sscanf(s, "%f", &result)
 	i := 0
-	for '0' <= s[i] && s[i] <= '9' {
+	for i < len(s) && '0' <= s[i] && s[i] <= '9' {
 		i++
 	}
 	return s[i:], Value{
@@ -493,6 +726,7 @@ func readNumber(s string) (string, Value, error) {
 	}, nil
 }
 
+// reads a symbol in and creates a new atom for it
 func readSymbol(s string) (string, Value, error) {
 	result := ""
 	i := 0
@@ -507,16 +741,29 @@ func readSymbol(s string) (string, Value, error) {
 	}, nil
 }
 
+// reads a string and converts it into a value
+// lists are represented as linked lists of cons cells
+// that descend on the cdr side, with each value held
+// in the car of that specific cons cell.
+// the string returned is the remainder of it after the read was done
+// sometimes read may need to be applied multiple times to fully ingest a string,
+// since read only consumes the first s-expression that it encounters.
 func Read(s string) (string, Value, error) {
+	// lists start with open paren
 	if s[0] == '(' {
 		return readList(s[1:])
+		// strings start with quotes
 	} else if s[0] == '"' {
 		return readString(s[1:])
+		// numbers start with a digit
 	} else if '0' <= s[0] && s[0] <= '9' {
 		return readNumber(s)
+		// if its white space, skip forward and call read again when we get to something
+		// thats not whitespace
 	} else if s[0] == ' ' || s[0] == '\t' || s[0] == '\n' {
 		skipForward := 1
-		for skipForward < len(s) && (s[skipForward] == ' ' || s[skipForward] == '\t') {
+		for skipForward < len(s) &&
+			(s[skipForward] == ' ' || s[skipForward] == '\t' || s[skipForward] == '\n') {
 			skipForward++
 		}
 		if skipForward == len(s) {
@@ -528,22 +775,74 @@ func Read(s string) (string, Value, error) {
 			}, nil
 		}
 		return Read(s[skipForward:])
-	} else if s[0:1] == "#f" {
+	} else if s[0] == '\'' {
+		remaining, beingQuoted, err := Read(s[1:])
+		return remaining, Value{
+			Car: &Value{
+				Car:   nil,
+				Cdr:   nil,
+				Type:  Symbol,
+				Value: "quote",
+			},
+			Cdr: &Value{
+				Car: &beingQuoted,
+				Cdr: &Value{
+					Car:   nil,
+					Cdr:   nil,
+					Type:  Nil,
+					Value: nil,
+				},
+				Type:  ConsCell,
+				Value: nil,
+			},
+			Type:  ConsCell,
+			Value: nil,
+		}, err
+		// skip over comments
+	} else if s[0] == ';' {
+		skipForward := 1
+		for skipForward < len(s) && s[skipForward] != '\n' {
+			skipForward++
+		}
+		if skipForward == len(s) {
+			return "", Value{
+				Car:   nil,
+				Cdr:   nil,
+				Type:  Nil,
+				Value: nil,
+			}, nil
+		}
+		return Read(s[skipForward:])
+		// true and false have special representations
+	} else if len(s) >= 2 && s[0:2] == "#f" {
 		return s[2:], Value{
 			Car:   nil,
 			Cdr:   nil,
 			Type:  Boolean,
 			Value: false,
 		}, nil
-	} else if s[0:1] == "#t" {
+	} else if len(s) >= 2 && s[0:2] == "#t" {
 		return s[2:], Value{
 			Car:   nil,
 			Cdr:   nil,
 			Type:  Boolean,
 			Value: true,
 		}, nil
+		// . is the marker for a cons pair, which means the thing to the right
+		// is the cdr of the cons cell, not nil like it would be for a standard list
+	} else if s[0] == '.' {
+		return s[1:], Value{
+			Car:   nil,
+			Cdr:   nil,
+			Type:  Nil,
+			Value: nil,
+		}, errors.New("unexpected '.'")
 	} else if 1 == 0 {
 		// reader macros
+
+		// closing paren marks the end of a list, this is an error.
+		// if its terminating a list, then read list will catch it
+		// and the error wont bubble to the user.
 	} else if s[0] == ')' {
 		return s[1:], Value{
 			Car:   nil,
@@ -552,9 +851,12 @@ func Read(s string) (string, Value, error) {
 			Value: nil,
 		}, errors.New("unexpected ')'")
 	}
+	// of none of these matched, then its a symbol, so read it in as that.
 	return readSymbol(s)
 }
 
+// print out each element in the lis
+// with special logic for cons pairs
 func printList(v Value) string {
 	result := Print(*v.Car)
 	for v = *v.Cdr; v.Type == ConsCell; v = *v.Cdr {
@@ -564,10 +866,11 @@ func printList(v Value) string {
 	if v.Type == Nil {
 		return result
 	} else {
-		return result + " . " + Print(v)
+		return result + ". " + Print(v)
 	}
 }
 
+// escapes special characters in string
 func stringify(s string) string {
 	s = strings.ReplaceAll(s, "\\", "\\\\")
 	s = strings.ReplaceAll(s, "\"", "\\\"")
@@ -577,12 +880,14 @@ func stringify(s string) string {
 	return s
 }
 
+// converts a value to a string recursively,
+// representing lists by wrapping them with parenthesis
 func Print(v Value) string {
 	switch v.Type {
 	case Nil:
-		return ""
+		return "()"
 	case Boolean:
-		return v.Value.(string)
+		return fmt.Sprintf("%v", v.Value.(bool))
 	case Number:
 		return fmt.Sprintf("%v", v.Value.(float64))
 	case String:
@@ -591,14 +896,71 @@ func Print(v Value) string {
 		return "(" + printList(v) + ")"
 	case Symbol:
 		return v.Value.(string)
+	default:
+		return "Cannot print fn/macro/special-form"
 	}
+}
 
-	panic("fell through print statement. Perhaps trying to print function literal?")
+func LoadFile(fileName string, frame Frame) (Frame, error) {
+	bytes, err := os.ReadFile(fileName)
+	loadedFrame := frame
+
+	if err != nil {
+		return frame, err
+	}
+	body := string(bytes[:])
+	for body != "" {
+		var parsedExpression Value
+		var err error
+		body, parsedExpression, err = Read(body)
+		if err != nil {
+			return frame, err
+		}
+		_, loadedFrame, err = Eval(parsedExpression, loadedFrame)
+		if err != nil {
+			return frame, err
+		}
+	}
+	return loadedFrame, nil
+}
+
+func Repl(frame Frame) {
+	fmt.Printf("Lisp interactive session\n")
+	scanner := bufio.NewScanner(os.Stdin)
+	for {
+		var userInput string
+		fmt.Printf("\n")
+		scanner.Scan()
+		userInput = scanner.Text()
+		for userInput != "" {
+			var parsedExpression Value
+			var err error
+			userInput, parsedExpression, err = Read(userInput)
+			if err != nil {
+				fmt.Printf("%v", err)
+				continue
+			}
+			var output Value
+			output, frame, err = Eval(parsedExpression, frame)
+			if err != nil {
+				fmt.Printf("%v", err)
+				continue
+			}
+			fmt.Printf("%v", Print(output))
+		}
+	}
 }
 
 func main() {
-	remaining, val, err := Read("((lambda (n) (cond ((eq? n 1) \"test string with \\nescape \\\"sequences\\\"\") (else (* n (fac (- 1 n)))))) 5)")
 	frame := NewTopLevelFrame()
-	result, _, evalErr := Eval(val, frame)
-	fmt.Printf("%v %v %v %v", remaining, result, err, evalErr)
+	frame, loadErr := LoadFile("stdlib.lisp", frame)
+	if loadErr != nil {
+		fmt.Printf("error loading file: %v", loadErr)
+		return
+	}
+	Repl(frame)
+	//	_, v, _ := Read("((lambda () 3))")
+	//	result, _, _ := Eval(v, frame)
+	//	fmt.Printf("%v", Print(result))
+
 }
