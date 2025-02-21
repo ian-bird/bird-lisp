@@ -69,6 +69,8 @@
 
 (define progn (lambda args (last args)))
 
+(define append (lambda colls (foldr append2 '() colls)))
+
 ;; update to use gensym
 (define let (macro let-args
 		   ((lambda (bindings body)
@@ -90,8 +92,6 @@
     (eval (map (lambda (e) (list 'quote e)) (cons fn args))))
 
 (define identity (lambda (x) x))
-
-(define append (lambda colls (foldr append2 '() colls)))
 
 (define (not x) (if x #f #t))
 
