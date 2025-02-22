@@ -235,15 +235,25 @@
 		       (auto-gensym? (lambda (a b) (if (eq? '# b) (list 'auto-gensym a) #f)))
 		       (first-pass (subseq-post-walk-2 auto-gensym?
 						      (subseq-post-walk-2 splicing-unquoted?
-									  (subseq-post-walk-2 unquoted? quoted-elements)))))
+									  (subseq-post-walk-2 unquoted? quoted-elements))))
+		       (get-gensyms-fn (lambda (tree self)
+					 (if (atom? tree)
+					     '()
+					     (if (eq? (car tree) 'auto-gensym)
+						 (cdr tree)
+						 (filter identity (mapcat (lambda (sub-tree)(self sub-tree self)) tree))))))
+		       (gensyms-alist (foldl (lambda (alist gensym-sym) (update alist gensym-sym (lambda (_) (gensym))))
+					     '()
+					     (get-gensyms-fn first-pass get-gensyms-fn))))
 		   (car (cdr
 			 (walk (lambda (element)
 				     (cond ((atom? element) (list 'list (list 'quote element)))
 					   ((eq? (car element) 'unquote) (cons 'list (cdr element)))
 					   ((eq? (car element) 'splicing-unquote) (car (cdr element)))
-					   ((eq? (car element) 'auto-gensym) (car (cdr element)))
+					   ((eq? (car element) 'auto-gensym) (list 'list (list 'quote (get gensyms-alist (car (cdr element))))))
 					   (else #f)))
 				   (lambda (element)
 				     (cond ((atom? element) element)
 					   (else (list 'list (cons 'append element)))))
 				   first-pass))))))
+
