@@ -1,46 +1,8 @@
 package main
 
 import (
-	"bufio"
-	"errors"
 	"fmt"
-	"os"
-	"strings"
 )
-
-// this is the type enum for values
-type ValueType int
-
-// these are all the valid types for a value
-const (
-	Nil         ValueType = iota // a nil value, for end of list etc
-	String                       // a string of characters
-	Number                       // a float64
-	Symbol                       // sort of like a string, but atomic. Also used for bindings.
-	Boolean                      // true or false
-	Function                     // a callable function
-	Macro                        // a callable macro
-	SpecialForm                  // one of the forms handled by the underlying system, not the interpreter
-	ConsCell                     // links together other values
-)
-
-// this is a value struct.
-// it can contain two pointers and no data
-// or it can contain a value
-type Value struct {
-	Car   *Value    // left pointer of a consCell
-	Cdr   *Value    // right pointer of a consCell
-	Type  ValueType // the type of this value
-	Value any       // the value (if any)
-}
-
-// a frame contains bindings that associate
-// certain strings (the value of symbol Values)
-// with other values
-type Frame struct {
-	parent   *Frame           // the frame above this one
-	bindings map[string]Value // its bindings
-}
 
 // this is a global counter used to prevent gensym collisions
 var gensymCounter = 0
@@ -190,43 +152,6 @@ func lookup(frame Frame, value Value) (Value, error) {
 	}
 
 	return v, nil
-}
-
-// creates a new top level frame with default
-// bindings for special forms
-func NewTopLevelFrame() Frame {
-	newSpecialForm := func(s string) Value {
-		return Value{
-			Car:   nil,
-			Cdr:   nil,
-			Type:  SpecialForm,
-			Value: s,
-		}
-	}
-	return Frame{
-		parent: nil,
-		bindings: map[string]Value{
-			"atom?":     newSpecialForm("atom?"),
-			"car":       newSpecialForm("car"),
-			"cdr":       newSpecialForm("cdr"),
-			"cond":      newSpecialForm("cond"),
-			"cons":      newSpecialForm("cons"),
-			"label":     newSpecialForm("label"),
-			"lambda":    newSpecialForm("lambda"),
-			"macro":     newSpecialForm("macro"),
-			"eq?":       newSpecialForm("eq?"),
-			"quote":     newSpecialForm("quote"),
-			">":         newSpecialForm(">"),
-			"+":         newSpecialForm("+"),
-			"-":         newSpecialForm("-"),
-			"*":         newSpecialForm("*"),
-			"/":         newSpecialForm("/"),
-			"%":         newSpecialForm("%"),
-			"char-list": newSpecialForm("char-list"),
-			"println":   newSpecialForm("println"),
-			"gensym":    newSpecialForm("gensym"),
-		},
-	}
 }
 
 // evaluates an s-expression and returns its result
@@ -499,24 +424,6 @@ func Eval(toEvaluate Value, frame *Frame) (Value, error) {
 						Type:  Number,
 						Value: lValue,
 					}, nil
-				// converts a string to a list of chars, evaluates argument
-				case "char-list":
-					if len(arguments) != 1 {
-						return nilValue, newError("wrong number of arguments passed to char-list")
-					}
-					if arguments[0].Type != String {
-						return nilValue, newError("cannot use non-string value for char-list")
-					}
-					chars := make([]Value, 0)
-					for _, c := range arguments[0].Value.(string) {
-						chars = append(chars, Value{
-							Car:   nil,
-							Cdr:   nil,
-							Type:  String,
-							Value: c,
-						})
-					}
-					return toList(chars), nil
 				// comparison operator, evaluates arguments, checks types, returns boolean
 				case ">":
 					if len(arguments) < 2 {
@@ -559,6 +466,161 @@ func Eval(toEvaluate Value, frame *Frame) (Value, error) {
 					}
 					gensymCounter++
 					return result, nil
+				case "set!":
+					if len(arguments) != 2 {
+						return nilValue, newError("wrong number of arguments passed to set!")
+					}
+					// evaluate 2nd arg
+					newValue, err := Eval(arguments[1], frame)
+					if err != nil {
+						return nilValue, passUpError(err)
+					}
+					// evaluate first arg and get string value of resulting
+					// symbol
+					toBindSymbol, err := Eval(arguments[0], frame)
+					if err != nil {
+						return nilValue, passUpError(err)
+					}
+					if toBindSymbol.Type != Symbol {
+						return nilValue, newError("identifier expected")
+					}
+					toBind := toBindSymbol.Value.(string)
+					for currentFrame := frame; currentFrame != nil; currentFrame = currentFrame.parent {
+						_, inFrame := currentFrame.bindings[toBind]
+						if inFrame {
+							currentFrame.bindings[toBind] = newValue
+							return nilValue, nil
+						}
+					}
+					return nilValue, fmt.Errorf("lookup: no binding found for symbol '%v'", toBind)
+				case "type":
+					if len(arguments) != 1 {
+						return nilValue, newError("wrong number of arguments passed to type")
+					}
+					evaledArg, err := Eval(arguments[0], frame)
+					if err != nil {
+						return nilValue, passUpError(err)
+					}
+					switch evaledArg.Type {
+					case Nil:
+						return Value{
+							Car:   nil,
+							Cdr:   nil,
+							Type:  Symbol,
+							Value: "nil",
+						}, nil
+					case String:
+						return Value{
+							Car:   nil,
+							Cdr:   nil,
+							Type:  Symbol,
+							Value: "string",
+						}, nil
+					case Number:
+						return Value{
+							Car:   nil,
+							Cdr:   nil,
+							Type:  Symbol,
+							Value: "number",
+						}, nil
+					case Symbol:
+						return Value{
+							Car:   nil,
+							Cdr:   nil,
+							Type:  Symbol,
+							Value: "symbol",
+						}, nil
+					case Boolean:
+						return Value{
+							Car:   nil,
+							Cdr:   nil,
+							Type:  Symbol,
+							Value: "boolean",
+						}, nil
+					case Function:
+						return Value{
+							Car:   nil,
+							Cdr:   nil,
+							Type:  Symbol,
+							Value: "function",
+						}, nil
+					case Macro:
+						return Value{
+							Car:   nil,
+							Cdr:   nil,
+							Type:  Symbol,
+							Value: "macro",
+						}, nil
+					case SpecialForm:
+						return Value{
+							Car:   nil,
+							Cdr:   nil,
+							Type:  Symbol,
+							Value: "specialform",
+						}, nil
+					case ConsCell:
+						return Value{
+							Car:   nil,
+							Cdr:   nil,
+							Type:  Symbol,
+							Value: "conscell",
+						}, nil
+					default:
+						return nilValue, nil
+					}
+
+				case "macroexpand-1":
+					if len(arguments) != 1 {
+						return nilValue, newError("wrong number of arguments passed to macroexpand-1")
+					}
+					var evaluatedArg Value
+					evaluatedArg, err = Eval(arguments[0], frame)
+					if err != nil {
+						return nilValue, passUpError(err)
+					}
+					if evaluatedArg.Type != ConsCell {
+						return nilValue, newError("argument to macroexpand-1 must be macro call")
+					}
+					macro, err := Eval(*evaluatedArg.Car, frame)
+					if err != nil {
+						return nilValue, passUpError(err)
+					}
+					if macro.Type != Macro {
+						return nilValue, newError("argument to macroexpand-1 must be macro call")
+					}
+					macroArgs := toArray(*evaluatedArg.Cdr)
+					result, err := apply(macro, macroArgs)
+					if err != nil {
+						return nilValue, passUpError(err)
+					}
+					return result, nil
+				case "bound?":
+					if len(arguments) != 1 {
+						return nilValue, newError("wrong number of arguments passed to bound?")
+					}
+					var evaluatedArg Value
+					evaluatedArg, err = Eval(arguments[0], frame)
+					if err != nil {
+						return nilValue, passUpError(err)
+					}
+					if evaluatedArg.Type != Symbol {
+						return nilValue, newError("argument to bound? must be symbol")
+					}
+					_, found := lookup(*frame, evaluatedArg)
+					if found != nil {
+						return Value{
+							Car:   nil,
+							Cdr:   nil,
+							Type:  Boolean,
+							Value: false,
+						}, nil
+					}
+					return Value{
+						Car:   nil,
+						Cdr:   nil,
+						Type:  Boolean,
+						Value: true,
+					}, nil
 				}
 			// if the first argument in the list is a macro,
 			// then pass the arguments un-evaluated to the macro body,
@@ -584,7 +646,10 @@ func Eval(toEvaluate Value, frame *Frame) (Value, error) {
 					evaluatedArgs = append(evaluatedArgs, evaluatedArg)
 				}
 				result, err := apply(firstThing, evaluatedArgs)
-				return result, err
+				if err != nil {
+					return nilValue, passUpError(err)
+				}
+				return result, nil
 			default:
 				return nilValue, newError("first argument in call must be a function, macro or special form")
 			}
@@ -592,386 +657,4 @@ func Eval(toEvaluate Value, frame *Frame) (Value, error) {
 			return nilValue, newError("unknown value type")
 		}
 	}
-}
-
-// reads a list in and creates a new value for it
-// read list will call read repeatedly as it traverses
-// its contents, until it hits a closing parens.
-func readList(s string) (string, Value, error) {
-	thisList := make([]Value, 0)
-	remainingString := s
-	appendAtom := false
-	thingsToRightOfDot := -1
-	for remainingString != "" {
-		var nextValue Value
-		var err error
-		remainingString, nextValue, err = Read(remainingString)
-		if err != nil {
-			// this error occurs when we get to the end of the list
-			if err.Error() == "unexpected ')'" {
-				asList := toList(thisList)
-				listTraverser := &asList
-				// if append atom is true, go to the last cons cell,
-				// the one whose cdr is null. Replace this with the
-				// car of that cons cell.
-				if appendAtom && thingsToRightOfDot != 1 {
-					return remainingString, Value{
-						Car:   nil,
-						Cdr:   nil,
-						Type:  Nil,
-						Value: nil,
-					}, errors.New("improperly placed . ")
-				}
-				if appendAtom {
-					for listTraverser.Cdr.Type == ConsCell {
-						listTraverser = listTraverser.Cdr
-					}
-					listTraverser.Value = listTraverser.Car.Value
-					listTraverser.Type = listTraverser.Car.Type
-					listTraverser.Car = nil
-					listTraverser.Cdr = nil
-				}
-				return remainingString, asList, nil
-				// when we encounter a .
-				// we only want to see one ., and it needs to be
-				// right before the last element. If it isn't,
-				// we're going to generate an improperly placed . error
-			} else if err.Error() == "unexpected '.'" {
-				if appendAtom {
-					return remainingString, Value{
-						Car:   nil,
-						Cdr:   nil,
-						Type:  Nil,
-						Value: nil,
-					}, errors.New("improperly placed . ")
-				}
-				appendAtom = true
-				// else this isn't an error we can catch, so propogate it up
-			} else {
-				return remainingString, Value{
-					Car:   nil,
-					Cdr:   nil,
-					Type:  Nil,
-					Value: nil,
-				}, err
-			}
-		}
-		if appendAtom {
-			thingsToRightOfDot++
-		}
-		if thingsToRightOfDot > 1 {
-			return remainingString, Value{
-				Car:   nil,
-				Cdr:   nil,
-				Type:  Nil,
-				Value: nil,
-			}, errors.New("improperly placed . ")
-		}
-		thisList = append(thisList, nextValue)
-	}
-	// if we didnt return early and hit the end of the string,
-	// then there was no matching closing parens and we need to generate an error
-	return "", Value{
-		Car:   nil,
-		Cdr:   nil,
-		Type:  Nil,
-		Value: nil,
-	}, errors.New("could not find matching closing parens")
-}
-
-// read a string in and create a new atom for it
-func readString(s string) (string, Value, error) {
-	escape := false
-	result := ""
-	for i := range s {
-		if escape {
-			switch s[i] {
-			case '"':
-				result += "\""
-			case 'n':
-				result += "\n"
-			case 't':
-				result += "\t"
-			case 'r':
-				result += "\r"
-			case '\\':
-				result += "\\"
-			}
-			escape = false
-		} else {
-			if s[i] == '\\' {
-				escape = true
-			} else if s[i] == '"' {
-				return s[i+1:], Value{
-					Car:   nil,
-					Cdr:   nil,
-					Type:  String,
-					Value: result,
-				}, nil
-			} else {
-				result += string(s[i])
-			}
-		}
-	}
-	return "", Value{
-		Car:   nil,
-		Cdr:   nil,
-		Type:  Nil,
-		Value: nil,
-	}, errors.New("could not find matching closing double quote")
-}
-
-// read a number in and create a new symbol for it
-func readNumber(s string) (string, Value, error) {
-	var result float64
-	fmt.Sscanf(s, "%f", &result)
-	i := 0
-	for i < len(s) && '0' <= s[i] && s[i] <= '9' {
-		i++
-	}
-	return s[i:], Value{
-		Car:   nil,
-		Cdr:   nil,
-		Type:  Number,
-		Value: result,
-	}, nil
-}
-
-// reads a symbol in and creates a new atom for it
-func readSymbol(s string) (string, Value, error) {
-	result := ""
-	i := 0
-	for ; i < len(s) && s[i] != ' ' && s[i] != '\t' && s[i] != '\n' && s[i] != '(' && s[i] != ')'; i++ {
-		result += string(s[i])
-	}
-	return s[i:], Value{
-		Car:   nil,
-		Cdr:   nil,
-		Type:  Symbol,
-		Value: result,
-	}, nil
-}
-
-// reads a string and converts it into a value
-// lists are represented as linked lists of cons cells
-// that descend on the cdr side, with each value held
-// in the car of that specific cons cell.
-// the string returned is the remainder of it after the read was done
-// sometimes read may need to be applied multiple times to fully ingest a string,
-// since read only consumes the first s-expression that it encounters.
-func Read(s string) (string, Value, error) {
-	// lists start with open paren
-	if s[0] == '(' {
-		return readList(s[1:])
-		// strings start with quotes
-	} else if s[0] == '"' {
-		return readString(s[1:])
-		// numbers start with a digit
-	} else if '0' <= s[0] && s[0] <= '9' {
-		return readNumber(s)
-		// if its white space, skip forward and call read again when we get to something
-		// thats not whitespace
-	} else if s[0] == ' ' || s[0] == '\t' || s[0] == '\n' {
-		skipForward := 1
-		for skipForward < len(s) &&
-			(s[skipForward] == ' ' || s[skipForward] == '\t' || s[skipForward] == '\n') {
-			skipForward++
-		}
-		if skipForward == len(s) {
-			return "", Value{
-				Car:   nil,
-				Cdr:   nil,
-				Type:  Nil,
-				Value: nil,
-			}, nil
-		}
-		return Read(s[skipForward:])
-	} else if s[0] == '\'' {
-		remaining, beingQuoted, err := Read(s[1:])
-		return remaining, Value{
-			Car: &Value{
-				Car:   nil,
-				Cdr:   nil,
-				Type:  Symbol,
-				Value: "quote",
-			},
-			Cdr: &Value{
-				Car: &beingQuoted,
-				Cdr: &Value{
-					Car:   nil,
-					Cdr:   nil,
-					Type:  Nil,
-					Value: nil,
-				},
-				Type:  ConsCell,
-				Value: nil,
-			},
-			Type:  ConsCell,
-			Value: nil,
-		}, err
-		// skip over comments
-	} else if s[0] == ';' {
-		skipForward := 1
-		for skipForward < len(s) && s[skipForward] != '\n' {
-			skipForward++
-		}
-		if skipForward == len(s) {
-			return "", Value{
-				Car:   nil,
-				Cdr:   nil,
-				Type:  Nil,
-				Value: nil,
-			}, nil
-		}
-		return Read(s[skipForward:])
-		// true and false have special representations
-	} else if len(s) >= 2 && s[0:2] == "#f" {
-		return s[2:], Value{
-			Car:   nil,
-			Cdr:   nil,
-			Type:  Boolean,
-			Value: false,
-		}, nil
-	} else if len(s) >= 2 && s[0:2] == "#t" {
-		return s[2:], Value{
-			Car:   nil,
-			Cdr:   nil,
-			Type:  Boolean,
-			Value: true,
-		}, nil
-		// . is the marker for a cons pair, which means the thing to the right
-		// is the cdr of the cons cell, not nil like it would be for a standard list
-	} else if s[0] == '.' {
-		return s[1:], Value{
-			Car:   nil,
-			Cdr:   nil,
-			Type:  Nil,
-			Value: nil,
-		}, errors.New("unexpected '.'")
-	} else if 1 == 0 {
-		// reader macros
-
-		// closing paren marks the end of a list, this is an error.
-		// if its terminating a list, then read list will catch it
-		// and the error wont bubble to the user.
-	} else if s[0] == ')' {
-		return s[1:], Value{
-			Car:   nil,
-			Cdr:   nil,
-			Type:  Nil,
-			Value: nil,
-		}, errors.New("unexpected ')'")
-	}
-	// of none of these matched, then its a symbol, so read it in as that.
-	return readSymbol(s)
-}
-
-// print out each element in the lis
-// with special logic for cons pairs
-func printList(v Value) string {
-	result := Print(*v.Car)
-	for v = *v.Cdr; v.Type == ConsCell; v = *v.Cdr {
-		result += " "
-		result += Print(*v.Car)
-	}
-	if v.Type == Nil {
-		return result
-	} else {
-		return result + ". " + Print(v)
-	}
-}
-
-// escapes special characters in string
-func stringify(s string) string {
-	s = strings.ReplaceAll(s, "\\", "\\\\")
-	s = strings.ReplaceAll(s, "\"", "\\\"")
-	s = strings.ReplaceAll(s, "\n", "\\n")
-	s = strings.ReplaceAll(s, "\t", "\\t")
-	s = strings.ReplaceAll(s, "\r", "\\r")
-	return s
-}
-
-// converts a value to a string recursively,
-// representing lists by wrapping them with parenthesis
-func Print(v Value) string {
-	switch v.Type {
-	case Nil:
-		return "()"
-	case Boolean:
-		return fmt.Sprintf("%v", v.Value.(bool))
-	case Number:
-		return fmt.Sprintf("%v", v.Value.(float64))
-	case String:
-		return "\"" + stringify(v.Value.(string)) + "\""
-	case ConsCell:
-		return "(" + printList(v) + ")"
-	case Symbol:
-		return v.Value.(string)
-	default:
-		return "Cannot print fn/macro/special-form"
-	}
-}
-
-func LoadFile(fileName string, frame Frame) (Frame, error) {
-	bytes, err := os.ReadFile(fileName)
-	loadedFrame := &frame
-
-	if err != nil {
-		return frame, err
-	}
-	body := string(bytes[:])
-	for body != "" {
-		var parsedExpression Value
-		var err error
-		body, parsedExpression, err = Read(body)
-		if err != nil {
-			return frame, err
-		}
-		_, err = Eval(parsedExpression, loadedFrame)
-		if err != nil {
-			return frame, err
-		}
-	}
-	return *loadedFrame, nil
-}
-
-func Repl(frame *Frame) {
-	fmt.Printf("Lisp interactive session\n")
-	scanner := bufio.NewScanner(os.Stdin)
-	for {
-		var userInput string
-		fmt.Printf("\n")
-		scanner.Scan()
-		userInput = scanner.Text()
-		for userInput != "" {
-			var parsedExpression Value
-			var err error
-			userInput, parsedExpression, err = Read(userInput)
-			if err != nil {
-				fmt.Printf("%v", err)
-				continue
-			}
-			var output Value
-			output, err = Eval(parsedExpression, frame)
-			if err != nil {
-				fmt.Printf("%v", err)
-				continue
-			}
-			fmt.Printf("%v", Print(output))
-		}
-	}
-}
-
-func main() {
-	frame := NewTopLevelFrame()
-	frame, loadErr := LoadFile("stdlib.lisp", frame)
-	if loadErr != nil {
-		fmt.Printf("error loading file: %v", loadErr)
-		return
-	}
-	Repl(&frame)
-	//	_, v, _ := Read("((lambda () 3))")
-	//	result, _, _ := Eval(v, frame)
-	//	fmt.Printf("%v", Print(result))
-
 }

@@ -100,15 +100,12 @@
 (define partial (lambda fn-and-args (lambda rest-of-args (apply (car fn-and-args) (append (cdr fn-and-args) rest-of-args)))))
 
 
-(define or (let ((args (gensym)))
-	     (macro args (foldl (lambda (true? e) (if true? #t (eval e)))
-				#f
-				args))))
+(define or (macro args (cons 'cond
+			     (append (map (lambda (arg) (list arg #t))
+					  args)
+				     '((else #f))))))
 
-(define and (let ((args (gensym)))
-	      (macro args (foldl (lambda (true? e) (if true? (eval e) #f))
-				 #t
-				 args))))
+(define and (macro args (list 'not (cons 'or (map (lambda (arg) (list 'not arg)) args)))))
 
 (define (walk before after code)
     (cond ((before code) (before code))
@@ -211,24 +208,6 @@
     (filter (lambda (pair) (not (eq? (car pair) k)))
 	    m))
 
-;; (`    (      LAMBDA (,    (car (car bindings)) (              let ,(cdr bindings) ,@ body))) (car (cdr (car bindings))))
-;; to
-;; (list (list 'lambda (list (car (car bindings)) (append (list 'let (cdr bindings)) body)))    (car (cdr (car bindings))))
-;;
-;; splicing unquote can go straight in.
-;; (' ,@ (map (partial + 1) '(1 2 3)))
-;; becomes
-;; (append (map (partial + 1) '(1 2 3)))
-;;
-;; single unquote needs to be in a list to avoid expanding
-;; (' , (+ 1 2))
-;; becomes
-;; (append (list (+ 1 2)))
-;;
-;; elements without any quoting need a quote added in addition to list
-;; (' lambda)
-;; becomes
-;; (append (list (quote lambda)))
 (define ` (macro quoted-elements
 		 (let ((unquoted? (lambda (a b) (if (eq? ', a) (list 'unquote  b) #f)))
 		       (splicing-unquoted? (lambda (a b) (if (eq?  ',@ a) (list 'splicing-unquote b) #f)))
@@ -247,13 +226,167 @@
 					     (get-gensyms-fn first-pass get-gensyms-fn))))
 		   (car (cdr
 			 (walk (lambda (element)
-				     (cond ((atom? element) (list 'list (list 'quote element)))
-					   ((eq? (car element) 'unquote) (cons 'list (cdr element)))
-					   ((eq? (car element) 'splicing-unquote) (car (cdr element)))
-					   ((eq? (car element) 'auto-gensym) (list 'list (list 'quote (get gensyms-alist (car (cdr element))))))
-					   (else #f)))
-				   (lambda (element)
-				     (cond ((atom? element) element)
-					   (else (list 'list (cons 'append element)))))
-				   first-pass))))))
+				 (cond ((atom? element)
+					(list 'list (list 'quote element)))
+				       ((eq? (car element) 'unquote)
+					(cons 'list (cdr element)))
+				       ((eq? (car element) 'splicing-unquote)
+					(car (cdr element)))
+				       ((eq? (car element) 'auto-gensym)
+					(list 'list (list 'quote (get gensyms-alist (car (cdr element))))))
+				       (else
+					#f)))
+			       (lambda (element)
+				 (cond ((atom? element) element)
+				       (else (list 'list (cons 'append element)))))
+			       first-pass))))))
+
+
+(define (range from to step)
+    (if (< from to)
+	(cons from (range (+ from step) to step))
+	'()))
+
+(define (macroexpand to-expand)
+    (let ((expanded (macroexpand-1 to-expand)))
+      (if  (and (eq? (type expanded) 'conscell)
+		(eq? (type (eval (car expanded))) 'macro))
+	   (macroexpand expanded)
+	   expanded)))
+
+
+
+(define (macroexpand-all to-expand)
+    (cond ((atom? to-expand) to-expand)
+	  ((and (not (atom? (car to-expand)))
+		(eq? (car (car to-expand)) 'macro)) (macroexpand to-expand))
+	  ((not (eq? (type (car to-expand)) 'symbol)) (map macroexpand-all to-expand))
+	  ((not (bound? (car to-expand))) (map macroexpand-all to-expand))
+	  ((eq? (type (eval (car to-expand))) 'macro) (map macroexpand-all (macroexpand to-expand)))
+	  (else (map macroexpand-all to-expand))))
+
+(define (caar x) (car (car x)))
+
+(define (cadr x) (car (cdr x)))
+
+(define (cdar x) (cdr (car x)))
+
+(define (cddr x) (cdr (cdr x)))
+
+
+(define (halt f) f)
+
+;; drops the last element
+(define (drop-last coll)
+    (take (dec (count coll)) coll))
+
+(define call-with-cont (lambda args
+			 ((last args) (apply (car args) (cdr (drop-last args))))))
+
+
+;; M expression converts a non-cps form
+;; into cps form
+
+;; expand m to convert primitive functions to cps
+;; eg + => +&
+(define (M expression)
+    (cond ((and (not (atom? expression))
+		(eq? (car expression) 'lambda))
+	   (let ((arg (cadr expression))
+		 (body (car (cddr expression)))
+		 ($k (gensym)))
+	     (` lambda (,@ arg) , (T body 'halt))))
+	  (else expression)))
+
+(define (T expression cont)
+    (cond
+      ((and (not (atom? expression))
+		(eq? (car expression) 'lambda))
+       (` , cont ,(M expression)))
+      ((atom? expression) (` , cont ,(M expression)))
+      ((eq? (car expression) 'label)
+       (T (car (cddr expression))
+	  (` lambda (arg #) (call-with-cont label ,(cadr expression) arg # , cont))))
+      ((eq? (car expression) 'cond)
+       (let ((cond-body (if  (eq? (car (last expression)) 'else)
+			     (cdr expression)
+			     (append (cdr expression) '(else '()))))
+	     (without-else (drop-last cond-body))
+	     (else-consq (cadr (last cond-body))))
+	 (foldr (lambda (pred-and-consq acc)
+		  (T (car pred-and-consq)
+		     (` lambda (pred-sym #) (branch pred-sym #
+						    ,(T (cadr pred-and-consq) cont)
+						    , acc))))
+		(T else-consq cont)
+		without-else)))
+      ((eq? (car expression) 'quote) (` , cont (quote ,(cadr expression))))
+      ((>= (count expression) 2)
+       (let ((gensyms (map (lambda (_) (gensym)) expression))
+	     (gensyms-and-symbols (zip gensyms expression)))
+	 (foldr (lambda (gensym-and-symbol acc)
+		  (T (cadr gensym-and-symbol) (` lambda (,(car gensym-and-symbol)) , acc)))
+		(` call-with-cont ,@ gensyms , cont)
+		gensyms-and-symbols)))
+      (else '())))
+
+(define (substitute from to body)
+    (cond ((eq? body from) to)
+	  ((atom? body) body)
+	  (else (map (partial substitute from to) body))))
+
+(define (inline-atoms cps-form)
+    (cond ((atom? cps-form) cps-form)
+	  ((and (not (atom? (car cps-form)))
+		(eq? 'lambda (caar cps-form))
+		(atom? (cadr cps-form)))
+	   (inline-atoms
+	    (substitute (caar (cdar cps-form)) ; lambda arg
+			(cadr cps-form) ; lambda call
+			(cadr (cdar cps-form)))))  ; lambda body
+	  (else (map inline-atoms cps-form))))
+
+(define (funcall? x)
+    (and (not ( atom? x))
+	 (not (atom? (car x)))
+	 (eq? 'lambda (caar x))))
+
+(define (unfold-cps cps-form)
+    (cond (;; function calls (lambda expression on left and args on right)
+	   ;; should be expanded to have the arguments assigned, then the funarg
+	   ;; assigned, and then the expansion of the lambda after the assignment
+	   (funcall? cps-form)
+	   (append (list (unfold-cps (cadr cps-form)))
+		   (` (assign ,(caar (cdar cps-form))))
+		   (unfold-cps (cadr (cdar cps-form)))))
+	  (;; call with cont needs to be expanded into the function call
+	   ;; and then the unfolded continuation following it
+	   (and (not (atom? cps-form))
+		(eq? (car cps-form) 'call-with-cont))
+	   (append (list (drop-last (cdr cps-form)))
+		   (unfold-cps (last cps-form))))
+	  (;; lambda literals need their params assigned
+	   ;; and then are followed by their unfolded body
+	   (and (not (atom? cps-form))
+		(eq? (car cps-form) 'lambda))
+	   (append (` (assign ,(car (cadr cps-form))))
+		   (unfold-cps (car (cddr cps-form)))))
+	  (;; a branch is turned into an imperative
+	   ;; branch instruction, followed by the unfolded
+	   ;; consequent, and then a label, and the unfolded
+	   ;; alternative
+	   (and (not (atom? cps-form))
+		(eq? (car cps-form) 'branch))
+	   (` (branch ,(cadr cps-form) consq #)
+	      ,@ (unfold-cps (car (cddr cps-form)))
+	      (: consq #)
+	      ,@ (unfold-cps (cadr (cddr cps-form)))))
+	  (;; if the continuation call is to halt,
+	   ;; then unfold the argument
+	   ;; and put the halt instruction after it
+	   (and (not (atom? cps-form))
+		(eq? (car cps-form) 'halt))
+	   (append (unfold-cps (cadr cps-form))
+		   (list 'halt)))
+	  (else (list cps-form))))
 
