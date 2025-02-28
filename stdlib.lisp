@@ -14,6 +14,8 @@
 				 (cons (cdr (car args)) ;; the rest of the first argument are the args
 				       (cdr args)))))))) ;; and the rest is the fn body
 
+
+
 ;; udpate to use gensym
 (define defmacro
        (macro args
@@ -283,6 +285,22 @@
 (define call-with-cont (lambda args
 			 ((last args) (apply (car args) (cdr (drop-last args))))))
 
+;; (match? ('lambda args body) '(lambda (x) (+ x 1))) => true
+(defmacro (match? template arg)
+    (let (;; matcher will return either a new matcher,
+	  ;; true if the pattern matches, or false if it fails
+	  (matcher (lambda (next-sym)
+		     ())))
+      (if (atom? arg)
+	  (eq? (matcher arg) #t)
+	  (foldl (fn (matcher arg)
+		     (if (or (eq? matcher #f) (eq? matcher #t))
+			 matcher
+			 (matcher arg)))
+		 matcher
+		 args))))
+
+(defmacro (destructuring-bind template arg body))
 
 ;; M expression converts a non-cps form
 ;; into cps form
