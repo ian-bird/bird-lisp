@@ -275,6 +275,7 @@
 
 (define (cddr x) (cdr (cdr x)))
 
+(define (list? x) (not (atom? x)))
 
 (define (halt f) f)
 
@@ -285,22 +286,156 @@
 (define call-with-cont (lambda args
 			 ((last args) (apply (car args) (cdr (drop-last args))))))
 
-;; (match? ('lambda args body) '(lambda (x) (+ x 1))) => true
-(defmacro (match? template arg)
-    (let (;; matcher will return either a new matcher,
-	  ;; true if the pattern matches, or false if it fails
-	  (matcher (lambda (next-sym)
-		     ())))
-      (if (atom? arg)
-	  (eq? (matcher arg) #t)
-	  (foldl (fn (matcher arg)
-		     (if (or (eq? matcher #f) (eq? matcher #t))
-			 matcher
-			 (matcher arg)))
-		 matcher
-		 args))))
+(define (match-head template arg)
+    (cond ((nil? template) arg)
+	  ((nil? arg) #f)
+	  ;; if a list is encountered loop back to top level matching
+	  ((list? (car template)) (if (list? (car arg))
+				      (match? (car template) (car arg))
+				      #f))
+	  ((eq? (car template) ',) (match-head (cddr template) (cdr arg)))
+	  ((eq? (car template) (car arg)) (match-head (cdr template) (cdr arg)))
+	  (else #f)))
 
-(defmacro (destructuring-bind template arg body))
+(define (match-tail template arg)
+    (let ((reversed (reverse arg))
+	  ;; need to flip unquotes
+	  (reversed-template
+	   (let ((unquote (gensym)))
+	     (foldl (lambda (acc e)
+		      (cond ((and (not (nil? acc))
+				  (eq? (car acc) unquote))
+			     (cons ', (cons e (cdr acc))))
+			    ((eq? e ',) (cons unquote acc))
+			    (else (cons e acc))))
+		    '()
+		    template))))
+      (match-head reversed-template reversed)))
+
+(define (match-centre template arg)
+    (cond ((nil? template) arg)
+	  ((nil? arg) #f)
+	  ((not (eq? (match-head template arg) #f)) (match-head template arg))
+	  (else (match-centre template (cdr arg)))))
+
+(define (split coll on)
+    (foldr (lambda (e acc)
+	     (if (eq? e on)
+		 (cons '() acc)
+		 (cons (cons e (car acc))
+		       (cdr acc))))
+	   '(())
+	   coll))
+
+(define (join coll with)
+    (if (> (count coll) 1)
+	(foldl (lambda (e acc)
+		 (append e
+			 (list with)
+			 acc))
+	       (car coll)
+	       (cdr coll))
+	coll))
+
+(define (match? template arg)
+    (if (atom? arg) #f
+	(let (;; builds up the segments that must match, ignoring splicing unquote symbols
+	      (actual-groups (split (let ((splicing-unquote (gensym)))
+				      (reverse
+				       ;; drops the element after a splicing unquote
+				       (foldl (lambda (acc e)
+						(cond ((and (not (nil? acc))
+							    (eq? splicing-unquote (car acc)))
+						       (cons ',@ (cdr acc)))
+						      ((eq? e ',@)
+						       (cons splicing-unquote acc))
+						      (else (cons e acc))))
+					      '()
+					      template)))
+				    ',@))
+              (head-matches? (or (eq? (car actual-groups) '())
+				 (not (eq? (match-head (car actual-groups) arg) #f))))
+              (tail-matches? (or (eq? (last actual-groups) '())
+				 (not (eq? (match-tail (last actual-groups) arg) #f))))
+              (centre-groups-match?
+	       (if  (> (count actual-groups) 2)
+		    ;; apply each center match to what remains of the center section
+		    ;; if #f was already generated just propogate it to the end
+		    (foldl (lambda (acc e)
+			     (if (atom? acc)
+				 acc
+				 (match-centre e acc)))
+			   (match-tail (last actual-groups)
+				       (match-head (car actual-groups)
+						   arg))
+			   (drop-last (cdr actual-groups)))
+		    #t)))
+	  (and head-matches? tail-matches? centre-groups-match?))))
+
+(define (take-while pred coll)
+    (cond ((nil? coll) '())
+	  ((pred (car coll))
+	   (cons (car coll) (take-while pred (cdr coll))))
+	  (else '())))
+
+(define (extract-values-from-template template)
+    (cond ((nil? template) '())
+	  ((or (eq? (car template) ',)
+	       (eq? (car template) ',@))
+	   (cons (cadr template)
+		 (extract-values-from-template (cddr template))))
+	  ((list? (car template))
+	   (append (extract-values-from-template (car template))
+		   (extract-values-from-template (cdr template))))
+	  (else (extract-values-from-template (cdr template)))))
+
+(define (none? pred coll)
+    (not (any? pred coll)))
+
+(define (extract-template-value template value from)
+    (cond ((nil? template) '())
+	  ((not (match? template from)) panic)
+	  ((nil? from) '())
+	  ((eq? (car template) ',)
+	   (if (eq? (cadr template) value)
+	       (car from)
+	       (extract-template-value (cddr template) value (cdr from))))
+	  ((eq? (car template) ',@)
+	   (if (eq? (cadr template) value)
+	       (if (> (count template) 2)
+		   (take-while (lambda (e)
+				 (not (eq? (nth template 3) e)))
+			       from)
+		   from)
+	       (extract-template-value (cddr template) value (cdr from))))
+	  ((list? (car template))
+	   (if (not (nil? (extract-template-value (car template) value (car from))))
+	       (extract-template-value (car template) value (car from))
+	       (extract-template-value (cdr template) value (cdr from))))
+	  (else (extract-template-value (cdr template) value (cdr from)))))
+
+(defmacro (destructuring-bind template from body)
+    (` let ,(map (lambda (val)
+		   (` , val
+			(extract-template-value , template (quote , val) , from)))
+		(extract-values-from-template template))
+      , body))
+
+(define match
+    (macro clauses
+	   (let ((match-on (car clauses))
+		 (rest (cdr clauses))
+		 (cases (if (eq? 'else (car (last rest)))
+			    (drop-last rest)
+			    rest))
+		 (else-statement (if (eq? 'else (car (last rest)))
+				     (list (last rest))
+				     '())))
+	     (` cond ,@(map (lambda (pattern)
+			      (` (match? (quote ,(car pattern)) , match-on)
+				 (destructuring-bind (quote ,(car pattern)) , match-on (progn ,@ (cdr pattern)))))
+			    cases)
+	       ,@ else-statement))))
 
 ;; M expression converts a non-cps form
 ;; into cps form
@@ -308,45 +443,49 @@
 ;; expand m to convert primitive functions to cps
 ;; eg + => +&
 (define (M expression)
-    (cond ((and (not (atom? expression))
-		(eq? (car expression) 'lambda))
-	   (let ((arg (cadr expression))
-		 (body (car (cddr expression)))
-		 ($k (gensym)))
-	     (` lambda (,@ arg) , (T body 'halt))))
-	  (else expression)))
+    (match expression
+	   ((lambda , args , body)
+	    (` lambda , args , (T body 'halt)))
+	   (else expression)))
 
 (define (T expression cont)
-    (cond
-      ((and (not (atom? expression))
-		(eq? (car expression) 'lambda))
-       (` , cont ,(M expression)))
-      ((atom? expression) (` , cont ,(M expression)))
-      ((eq? (car expression) 'label)
-       (T (car (cddr expression))
-	  (` lambda (arg #) (call-with-cont label ,(cadr expression) arg # , cont))))
-      ((eq? (car expression) 'cond)
-       (let ((cond-body (if  (eq? (car (last expression)) 'else)
-			     (cdr expression)
-			     (append (cdr expression) '(else '()))))
-	     (without-else (drop-last cond-body))
-	     (else-consq (cadr (last cond-body))))
-	 (foldr (lambda (pred-and-consq acc)
-		  (T (car pred-and-consq)
-		     (` lambda (pred-sym #) (branch pred-sym #
-						    ,(T (cadr pred-and-consq) cont)
-						    , acc))))
-		(T else-consq cont)
-		without-else)))
-      ((eq? (car expression) 'quote) (` , cont (quote ,(cadr expression))))
-      ((>= (count expression) 2)
-       (let ((gensyms (map (lambda (_) (gensym)) expression))
-	     (gensyms-and-symbols (zip gensyms expression)))
-	 (foldr (lambda (gensym-and-symbol acc)
-		  (T (cadr gensym-and-symbol) (` lambda (,(car gensym-and-symbol)) , acc)))
-		(` call-with-cont ,@ gensyms , cont)
-		gensyms-and-symbols)))
-      (else '())))
+    (if (atom? expression)
+	(` , cont ,(M expression))
+	(match expression
+	       ((lambda ,@ _)
+		(` , cont ,(M expression)))
+	       
+	       ((label , sym , rterm)
+		(T rterm (` lambda (arg #) (call-with-cont label , sym arg # , cont))))
+	       
+	       ((cond ,@ clauses (else , else-statement))
+		(foldr (lambda (pred-and-consq acc)
+			 (destructuring-bind '(, pred , consq) pred-and-consq
+			   (T pred (` lambda (pred-sym #)
+				      (branch pred-sym # ,(T consq cont) , acc)))))
+		       (T else-statement cont)
+		       clauses))
+	       
+	       ((cond ,@ clauses)
+		(foldr (lambda (pred-and-consq acc)
+			 (destructuring-bind '(, pred , consq) pred-and-consq
+			   (T pred (` lambda (pred-sym #)
+				      (branch pred-sym # ,(T consq cont) , acc)))))
+		       (T '() cont)
+		       clauses))
+	       ((quote , quoted)
+		(` , cont (quote , quoted)))
+	       
+	       ((, _ , _ ,@ _)
+		(let ((gensyms (map (lambda (_) (gensym)) expression))
+		      (gensyms-and-symbols (zip gensyms expression)))
+		  (foldr (lambda (gensym-and-symbol acc)
+			   (destructuring-bind '(, gensym , symbol) gensym-and-symbol
+			     (T symbol (` lambda (, gensym) , acc))))
+			 (` call-with-cont ,@ gensyms , cont)
+			 gensyms-and-symbols)))
+	       
+	       (else '()))))
 
 (define (substitute from to body)
     (cond ((eq? body from) to)
@@ -354,20 +493,17 @@
 	  (else (map (partial substitute from to) body))))
 
 (define (inline-atoms cps-form)
-    (cond ((atom? cps-form) cps-form)
-	  ((and (not (atom? (car cps-form)))
-		(eq? 'lambda (caar cps-form))
-		(atom? (cadr cps-form)))
-	   (inline-atoms
-	    (substitute (caar (cdar cps-form)) ; lambda arg
-			(cadr cps-form) ; lambda call
-			(cadr (cdar cps-form)))))  ; lambda body
-	  (else (map inline-atoms cps-form))))
+    (match cps-form
+	   (((lambda (, param) , body) , arg)
+	    (if (atom? arg)
+		(inline-atoms (substitute param arg body))
+		(map inline-atoms cps-form)))
+	   ((,@ elements)
+	    (map inline-atoms cps-form))
+	   (else cps-form)))
 
 (define (funcall? x)
-    (and (not ( atom? x))
-	 (not (atom? (car x)))
-	 (eq? 'lambda (caar x))))
+    (match? '((lambda ,@ _) ,@ _) x))
 
 (define (unfold-cps cps-form)
     (cond (;; function calls (lambda expression on left and args on right)
