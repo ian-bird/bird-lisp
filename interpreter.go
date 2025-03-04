@@ -640,7 +640,15 @@ func Eval(toEvaluate Value, frame *Frame) (Value, error) {
 					}, nil
 
 				case "assemble":
-					result, err := assemble(arguments)
+					if len(arguments) != 1 {
+						return nilValue, newError("wrong number of arguments passed to assemble")
+					}
+					var evaluatedArg Value
+					evaluatedArg, err = Eval(arguments[0], frame)
+					if err != nil {
+						return nilValue, passUpError(err)
+					}
+					result, err := assemble(toArray(evaluatedArg))
 					if err != nil {
 						return nilValue, passUpError(err)
 					}
@@ -675,7 +683,29 @@ func Eval(toEvaluate Value, frame *Frame) (Value, error) {
 				}
 				return result, nil
 			case CompiledFunction:
-
+				instructions := firstThing.Value.([]Instruction)
+				workspace := make([]Value, len(instructions) / 2 + 1)
+				for i, arg := range arguments {
+					var evaluatedArg Value 
+					evaluatedArg, err = Eval(arg, frame)
+					if err != nil {
+						return nilValue, passUpError(err)
+					}
+					workspace[i] = evaluatedArg
+				}
+							
+				newStackFrame := StackFrame{
+					workspace: workspace,
+					callerIsInterpreted: true,
+					returnLine:  0,
+					callerCode: []Instruction {},
+				}
+				stack = append(stack, newStackFrame)
+				result, err := exec(firstThing.Value.([]Instruction), frame)
+				if err != nil {
+					return nilValue, passUpError(err)
+				}
+				return result, nil
 			default:
 				return nilValue, newError("first argument in call must be a function, macro or special form")
 			}

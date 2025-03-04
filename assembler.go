@@ -39,6 +39,7 @@ func assemble(code []Value) (Value, error) {
 			} else {
 				values = append(values, currentValue)
 				valueClasses = append(valueClasses, Const)
+				i += 1
 			}
 		}
 		return values, valueClasses

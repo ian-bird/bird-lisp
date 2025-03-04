@@ -41,6 +41,7 @@ func NewTopLevelFrame() Frame {
 			"type":          newSpecialForm("type"),          // get the type of a value
 			"macroexpand-1": newSpecialForm("macroexpand-1"), // expand a macro without evaluating
 			"bound?":        newSpecialForm("bound?"),        // return whether a symbol is bound
+			"assemble":      newSpecialForm("assemble"),      // calls the assembler for compiled object code
 		},
 	}
 }
@@ -103,8 +104,19 @@ func main() {
 		return
 	}
 	Repl(&frame)
-	//	_, v, _ := Read("((lambda () 3))")
-	//	result, _, _ := Eval(v, frame)
-	//	fmt.Printf("%v", Print(result))
+	// _, v, _ := Read("(define fib (compile '(lambda (n) (if (> 2 n) 1 (+ (fib (- n 1)) (fib (- n 2)))))))")
+	// _, err := Eval(v, &frame)
+	// if err != nil {
+	// 	fmt.Printf("error evaluating: %v", err)
+	// 	return
+	// }
 
+	// _, v, _ = Read("(fib 2)")
+	// result, err := Eval(v, &frame)
+	// if err != nil {
+	// 	fmt.Printf("error evaluating: %v", err)
+	// 	return
+	// }
+
+	// fmt.Printf("%v", Print(result))
 }

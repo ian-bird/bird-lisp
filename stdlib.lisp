@@ -661,4 +661,5 @@
 
 (defmacro (define-compiled-fn name-and-args body)
     (destructuring-bind (, name ,@ args) name-and-args
-      (` label , name (compile (lambda , args , body)))))
+      (` label , name (compile (quote (lambda , args , body))))))
+

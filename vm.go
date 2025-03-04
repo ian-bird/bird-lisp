@@ -58,8 +58,6 @@ type StackFrame struct {
 
 var stack []StackFrame
 
-var stackPointer int
-
 func accessValues(i Instruction) []Value {
 	result := make([]Value, len(i.values))
 	for vNum := 0; vNum < len(i.values); vNum++ {
@@ -68,9 +66,9 @@ func accessValues(i Instruction) []Value {
 		switch valueType {
 		// args are loaded onto the stack before calling
 		case Arg:
-			result[vNum] = stack[len(stack)-1].workspace[value.Value.(int)]
+			result[vNum] = stack[len(stack)-1].workspace[int(value.Value.(float64))]
 		case Stack:
-			result[vNum] = stack[len(stack)-1].workspace[value.Value.(int)]
+			result[vNum] = stack[len(stack)-1].workspace[int(value.Value.(float64))]
 		case Const:
 			result[vNum] = value
 		case ReturnRegister:
@@ -145,7 +143,8 @@ func exec(instructions []Instruction, env *Frame) (Value, error) {
 
 			switch function.Type {
 			case CompiledFunction:
-				stackWorkspace := values[1:]
+				stackWorkspace := make([]Value, len(instructions) / 2 + 1)
+				copy(stackWorkspace, values[1:])
 
 				newFrame := StackFrame{
 					workspace:           stackWorkspace,
@@ -189,9 +188,10 @@ func exec(instructions []Instruction, env *Frame) (Value, error) {
 			case CompiledFunction:
 				// compiled function can be ran without consuming stack.
 				// return data remains unchanged, but blow away stack variables
-				stackWorkspace := values[1:]
+				stackWorkspace := make([]Value, len(instructions) / 2 + 1)
+				copy(stackWorkspace, values[1:])
 
-				instructionPointer = 0
+				instructionPointer = -1
 				instructions = function.Value.([]Instruction)
 				stack[len(stack)-1].workspace = stackWorkspace
 			case InterpretedFunction:
@@ -211,7 +211,7 @@ func exec(instructions []Instruction, env *Frame) (Value, error) {
 			// then jump the instruction pointer to the target line
 			predicate := values[0]
 			if predicate.Type != Nil && (predicate.Type != Boolean || predicate.Value.(bool)) {
-				instructionPointer = instruction.values[1].Value.(int) - 1
+				instructionPointer = int(instruction.values[1].Value.(float64)) - 1 // -1 because its added at the end of processing
 			}
 		case Label:
 			// update the environment
@@ -225,11 +225,7 @@ func exec(instructions []Instruction, env *Frame) (Value, error) {
 		case Assign:
 			// load the value into the correct slot in the stack workspace
 			val := values[0]
-			whichSlot := instruction.values[1].Value.(int)
-			if whichSlot >= len(stack[len(stack)-1].workspace) {
-				stack[len(stack)-1].workspace = append(stack[len(stack)-1].workspace,
-					make([]Value, whichSlot-len(stack[len(stack)-1].workspace)+1)...)
-			}
+			whichSlot := int(instruction.values[1].Value.(float64))
 			stack[len(stack)-1].workspace[whichSlot] = val
 		case Atom:
 			returnValue = Value{
@@ -271,7 +267,7 @@ func exec(instructions []Instruction, env *Frame) (Value, error) {
 		case GreaterThan:
 			maxValue := values[0].Value.(float64)
 			result := true
-			for _, value := range values {
+			for _, value := range values[1:] {
 				if value.Value.(float64) >= maxValue {
 					result = false
 				}
@@ -294,8 +290,8 @@ func exec(instructions []Instruction, env *Frame) (Value, error) {
 				Value: result,
 			}
 		case Minus:
-			var result float64
-			for _, value := range values {
+			result := values[0].Value.(float64)
+			for _, value := range values[1:] {
 				result -= value.Value.(float64)
 			}
 			returnValue = Value{
@@ -316,8 +312,8 @@ func exec(instructions []Instruction, env *Frame) (Value, error) {
 				Value: result,
 			}
 		case Div:
-			var result float64
-			for _, value := range values {
+			result := values[0].Value.(float64)
+			for _, value := range values[1:] {
 				result /= value.Value.(float64)
 			}
 			returnValue = Value{
