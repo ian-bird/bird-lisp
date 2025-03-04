@@ -394,25 +394,31 @@
 
 (define (extract-template-value template value from)
     (cond ((nil? template) '())
-	  ((not (match? template from)) panic)
-	  ((nil? from) '())
-	  ((eq? (car template) ',)
-	   (if (eq? (cadr template) value)
-	       (car from)
-	       (extract-template-value (cddr template) value (cdr from))))
-	  ((eq? (car template) ',@)
-	   (if (eq? (cadr template) value)
-	       (if (> (count template) 2)
-		   (take-while (lambda (e)
-				 (not (eq? (nth template 3) e)))
-			       from)
-		   from)
-	       (extract-template-value (cddr template) value (cdr from))))
-	  ((list? (car template))
-	   (if (not (nil? (extract-template-value (car template) value (car from))))
-	       (extract-template-value (car template) value (car from))
-	       (extract-template-value (cdr template) value (cdr from))))
-	  (else (extract-template-value (cdr template) value (cdr from)))))
+	((not (match? template from)) panic)
+	((nil? from) '())
+	((eq? (car template) ',)
+	 (if (eq? (cadr template) value)
+	     (car from)
+	     (extract-template-value (cddr template) value (cdr from))))
+	((eq? (car template) ',@)
+	 (if (eq? (cadr template) value)
+	     (if (> (count template) 2)
+                 (take (last (take-while (lambda (n)
+					  (match? template (drop n from)))
+					 (range 0 (inc (count from)) 1)))
+		       from)
+		 from)
+	     (extract-template-value (cddr template)
+				     value
+				     (drop (last (take-while (lambda (n)
+							      (match? template (drop n from)))
+							     (range 0  (inc (count from)) 1)))
+					   from))))
+	((list? (car template))
+	 (if (not (nil? (extract-template-value (car template) value (car from))))
+	     (extract-template-value (car template) value (car from))
+	     (extract-template-value (cdr template) value (cdr from))))
+	(else (extract-template-value (cdr template) value (cdr from)))))
 
 (defmacro (destructuring-bind template from body)
     (` let ,(map (lambda (val)
@@ -502,45 +508,157 @@
 	    (map inline-atoms cps-form))
 	   (else cps-form)))
 
-(define (funcall? x)
-    (match? '((lambda ,@ _) ,@ _) x))
+(define (unfold cps-form)
+    (match cps-form
+	   (((lambda , params , body) , arg)
+	    (` ,(unfold arg)
+		,@(map (lambda (param) (` assign , param))
+		       params)
+		,@(unfold body)))
+	   
+	   ((call-with-cont ,@ args , cont)
+	    (` , args ,@ (unfold cont)))
+	   
+	   ((lambda , params , body)
+	    (` ,@(map (lambda (param) (` assign , param))
+		      params)
+		 ,@(unfold body)))
 
-(define (unfold-cps cps-form)
-    (cond (;; function calls (lambda expression on left and args on right)
-	   ;; should be expanded to have the arguments assigned, then the funarg
-	   ;; assigned, and then the expansion of the lambda after the assignment
-	   (funcall? cps-form)
-	   (append (list (unfold-cps (cadr cps-form)))
-		   (` (assign ,(caar (cdar cps-form))))
-		   (unfold-cps (cadr (cdar cps-form)))))
-	  (;; call with cont needs to be expanded into the function call
-	   ;; and then the unfolded continuation following it
-	   (and (not (atom? cps-form))
-		(eq? (car cps-form) 'call-with-cont))
-	   (append (list (drop-last (cdr cps-form)))
-		   (unfold-cps (last cps-form))))
-	  (;; lambda literals need their params assigned
-	   ;; and then are followed by their unfolded body
-	   (and (not (atom? cps-form))
-		(eq? (car cps-form) 'lambda))
-	   (append (` (assign ,(car (cadr cps-form))))
-		   (unfold-cps (car (cddr cps-form)))))
-	  (;; a branch is turned into an imperative
-	   ;; branch instruction, followed by the unfolded
-	   ;; consequent, and then a label, and the unfolded
-	   ;; alternative
-	   (and (not (atom? cps-form))
-		(eq? (car cps-form) 'branch))
-	   (` (branch ,(cadr cps-form) consq #)
-	      ,@ (unfold-cps (car (cddr cps-form)))
-	      (: consq #)
-	      ,@ (unfold-cps (cadr (cddr cps-form)))))
-	  (;; if the continuation call is to halt,
-	   ;; then unfold the argument
-	   ;; and put the halt instruction after it
-	   (and (not (atom? cps-form))
-		(eq? (car cps-form) 'halt))
-	   (append (unfold-cps (cadr cps-form))
-		   (list 'halt)))
-	  (else (list cps-form))))
+	   ((branch , pred , consq , alt)
+	    (` (branch , pred consq-label #)
+	       ,@(unfold alt)
+	       (-> consq-label #)
+	       ,@(unfold consq)))
 
+	   ((halt , arg)
+	    (` ,@(unfold arg)
+		 halt))
+
+	   (else (list cps-form))))
+
+(define (fix-assignments instructions)
+    (let ((stack-value 0)
+	  (gensym-alist '()))
+      (reverse
+       (foldl (lambda (fixed instruction)
+		(cons
+		 (if (list? instruction)
+		     (if (eq? (car instruction) 'assign)
+			 (if (or (nil? fixed) (eq? (caar fixed) 'assign))
+			     (progn
+			       (set! 'stack-value (inc stack-value))
+			       (set! 'gensym-alist
+				     (update gensym-alist
+					     (cadr instruction)
+					     (constantly (dec stack-value))))
+			       (` assign arg ,(dec stack-value) ,(dec stack-value)))
+			     (progn
+			       (set! 'stack-value (inc stack-value))
+			       (set! 'gensym-alist
+				     (update gensym-alist
+					     (cadr instruction)
+					     (constantly (dec stack-value))))
+			       (` assign prev , (dec stack-value))))
+			 (foldr (lambda (term acc)
+				  (if (get gensym-alist term)
+				      (cons '$
+					    (cons (get gensym-alist term)
+						  acc))
+				      (cons term acc)))
+				'()
+				instruction))
+		     (if (and (eq? (type instruction) 'symbol)
+			      (get gensym-alist instruction))
+			 (list '$ (get gensym-alist instruction))
+			 instruction))
+		 fixed))
+	      '()
+	      instructions))))
+
+(define (scan f basis coll)
+    (reverse
+     (foldl (lambda (acc e)
+	      (cons (f (car acc) e) acc))
+	    (list basis)
+	    coll)))
+
+(define (fix-branches instructions)
+    (let ((goto-alist '()))
+      (foldr (lambda (instruction-and-line-num acc)
+	       (destructuring-bind '(, instruction , line-num) instruction-and-line-num
+		 (match instruction
+			((-> , goto)
+			 (progn
+			   (set! 'goto-alist (update goto-alist
+						     goto
+						     (constantly line-num)))
+			   acc))
+			((branch ,@ middle , goto)
+			 (cons (` branch ,@ middle , (get goto-alist goto)) acc))
+			(else
+			 (cons instruction acc)))))
+	     '()
+	     (zip instructions
+		  (scan (lambda (acc instruction)
+			  (if (and (not (atom? instruction))
+				   (eq? (car instruction) '->))
+			      acc
+			      (inc acc)))
+			0
+			instructions)))))
+
+(define (add-gosubs instructions)
+    (map (lambda (instruction)
+	   (cond ((atom? instruction)
+		  instruction)
+		 ((or (eq? (car instruction) 'assign)
+		      (eq? (car instruction) 'branch)
+		      (and (eq? (count instruction) 2)
+			   (eq? (car instruction) '$)))
+		  instruction)
+		 ((and (eq? (type (car instruction)) 'symbol)
+		       (bound? (car instruction))
+		       (eq? (type (eval (car instruction))) 'specialform))
+		  instruction)
+		 ((list? (car instruction))
+		  (cons 'code instruction))
+		 (else (cons 'gosub instruction))))
+	 instructions))
+
+(define (add-tailcalls instructions)
+    (foldr (lambda (instruction prevs)
+	     (cons (cond ((or (nil? prevs)
+			     (not (eq? (car prevs) 'halt)))
+			  instruction)
+			((and (list? instruction)
+			      (eq? (car instruction) 'gosub))
+			 (cons 'tailcall (cdr instruction)))
+			(else instruction))
+		   prevs))
+	   '()
+	   instructions))
+
+(define (optimize instructions)
+    (add-tailcalls
+     (add-gosubs
+      (fix-branches
+       (fix-assignments
+	instructions)))))
+
+(define (compile lambda-expression)
+    (assemble
+     (map (lambda (instruction)
+	    (match instruction
+		   ((code ,@ lines)
+		    (` code ,@(optimize lines)))
+		   (else instruction)))
+	  (optimize
+	   (unfold
+	    (inline-atoms
+	     (M
+	      (macroexpand-all
+	       lambda-expression))))))))
+
+(defmacro (define-compiled-fn name-and-args body)
+    (destructuring-bind (, name ,@ args) name-and-args
+      (` label , name (compile (lambda , args , body)))))

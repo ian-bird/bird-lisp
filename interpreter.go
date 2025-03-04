@@ -39,14 +39,24 @@ func toList(values []Value) Value {
 
 // returns true if 2 values are equal, checks recursively
 func areEqual(a, b Value) bool {
-	if a.Type != b.Type {
-		return false
-	}
-	if a.Type != ConsCell && a.Value != b.Value {
-		return false
-	}
-	if a.Type == ConsCell {
-		return areEqual(*a.Car, *b.Car) && areEqual(*a.Cdr, *b.Cdr)
+	aTodo := []Value{a}
+	bTodo := []Value{b}
+
+	for len(aTodo) > 0 {
+		a := aTodo[0]
+		b := bTodo[0]
+		if a.Type != b.Type {
+			return false
+		}
+		if a.Type != ConsCell && a.Value != b.Value {
+			return false
+		}
+		if a.Type == ConsCell {
+			aTodo = append(aTodo, *a.Car, *a.Cdr)
+			bTodo = append(bTodo, *b.Car, *b.Cdr)
+		}
+		aTodo = aTodo[1:]
+		bTodo = bTodo[1:]
 	}
 	return true
 }
@@ -191,7 +201,7 @@ func Eval(toEvaluate Value, frame *Frame) (Value, error) {
 			return lookedUpVal, nil
 		case Nil:
 			return nilValue, nil
-		case Function:
+		case InterpretedFunction:
 			return toEvaluate, nil
 		case Macro:
 			return toEvaluate, nil
@@ -365,7 +375,7 @@ func Eval(toEvaluate Value, frame *Frame) (Value, error) {
 					return Value{
 						Car:   toEvaluate.Cdr.Car, // store arguments
 						Cdr:   toEvaluate.Cdr.Cdr, // store body
-						Type:  Function,
+						Type:  InterpretedFunction,
 						Value: frame, // store lexical bindings
 					}, nil
 				// creates a new macro, does not evaluate arguments
@@ -537,12 +547,19 @@ func Eval(toEvaluate Value, frame *Frame) (Value, error) {
 							Type:  Symbol,
 							Value: "boolean",
 						}, nil
-					case Function:
+					case InterpretedFunction:
 						return Value{
 							Car:   nil,
 							Cdr:   nil,
 							Type:  Symbol,
-							Value: "function",
+							Value: "interpretedfunction",
+						}, nil
+					case CompiledFunction:
+						return Value{
+							Car:   nil,
+							Cdr:   nil,
+							Type:  Symbol,
+							Value: "compiledfunction",
 						}, nil
 					case Macro:
 						return Value{
@@ -621,6 +638,13 @@ func Eval(toEvaluate Value, frame *Frame) (Value, error) {
 						Type:  Boolean,
 						Value: true,
 					}, nil
+
+				case "assemble":
+					result, err := assemble(arguments)
+					if err != nil {
+						return nilValue, passUpError(err)
+					}
+					return result, nil
 				}
 			// if the first argument in the list is a macro,
 			// then pass the arguments un-evaluated to the macro body,
@@ -635,7 +659,7 @@ func Eval(toEvaluate Value, frame *Frame) (Value, error) {
 			// if the first argument in the list is a function,
 			// then pass the evaluated arguments to the function body,
 			// and return the function output
-			case Function:
+			case InterpretedFunction:
 				evaluatedArgs := make([]Value, 0)
 				for _, arg := range arguments {
 					var evaluatedArg Value
@@ -650,6 +674,8 @@ func Eval(toEvaluate Value, frame *Frame) (Value, error) {
 					return nilValue, passUpError(err)
 				}
 				return result, nil
+			case CompiledFunction:
+
 			default:
 				return nilValue, newError("first argument in call must be a function, macro or special form")
 			}
