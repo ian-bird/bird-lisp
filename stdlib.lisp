@@ -91,15 +91,21 @@
       (list (list 'lambda (list arg) (list (list 'macro '() arg))) x)))
 
 (define (apply fn args)
+    ;; we need to quote each arg and the function
+    ;; since theyve already been evaluated on the way in,
+    ;; and we don't want to evaluate again on the way into
+    ;; the eval lambda
     (eval (map (lambda (e) (list 'quote e)) (cons fn args))))
 
 (define identity (lambda (x) x))
 
 (define (not x) (if x #f #t))
 
-(define < (lambda operands (apply > (reverse operands))))
+(define < (macro operands (cons '> (reverse operands))))
 
-(define partial (lambda fn-and-args (lambda rest-of-args (apply (car fn-and-args) (append (cdr fn-and-args) rest-of-args)))))
+(define partial (lambda fn-and-args
+		  (lambda rest-of-args
+		    (apply (car fn-and-args) (append (cdr fn-and-args) rest-of-args)))))
 
 
 (define or (macro args (cons 'cond
@@ -531,49 +537,103 @@
 	       ,@(unfold consq)))
 
 	   ((halt , arg)
-	    (` ,@(unfold arg)
-		 halt))
+	    (` ,(if (atom? arg) arg (unfold arg))
+	       halt))
+
+	   ((quote , quoted)
+	    (` quote , quoted))
 
 	   (else (list cps-form))))
+
+(define (flatten coll)
+    (mapcat (lambda (x)
+	   (if (list? x)
+	       (flatten x)
+	       (list x)))
+	    coll))
+
+;; need to define how to look up bindings for sub functions
+(define (insert-bindings instructions)
+    (let ((extract-args (lambda (form callback)
+			  (let ((these-args
+				  (map last
+				       (take-while (lambda (instruction)
+						     (and (list? instruction)
+							  (eq? (car instruction) 'assign)))
+						   form))))
+			    (append these-args
+				    (map (lambda (x) (callback x callback))
+					 (filter (lambda (instruction)
+						   (and (list? instruction)
+							(list? (car instruction))))
+						 form))))))
+	  (needs-binding (lambda (form arg)
+			   (any? (partial eq? arg)
+				 (flatten (filter (lambda (x)
+						    (and ( list? x)
+							 (list? (car x))))
+						  form)))))
+	  (args (extract-args instructions extract-args))
+	  (to-bind (filter (partial needs-binding instructions)
+			   (filter atom? args))))
+      (map (lambda (instruction)
+	     (if (and (list? instruction)
+		     (eq? (car instruction) 'assign)
+		     (any? (partial eq? (cadr instruction)) to-bind))
+		 (` bind , (cadr instruction))
+		 instruction))
+	   instructions)))
 
 (define (fix-assignments instructions)
     (let ((stack-value 0)
 	  (gensym-alist '()))
-      (reverse
-       (foldl (lambda (fixed instruction)
-		(cons
-		 (if (list? instruction)
-		     (if (eq? (car instruction) 'assign)
-			 (if (or (nil? fixed) (eq? (caar fixed) 'assign))
-			     (progn
-			       (set! 'stack-value (inc stack-value))
-			       (set! 'gensym-alist
-				     (update gensym-alist
-					     (cadr instruction)
-					     (constantly (dec stack-value))))
-			       (` assign arg ,(dec stack-value) ,(dec stack-value)))
-			     (progn
-			       (set! 'stack-value (inc stack-value))
-			       (set! 'gensym-alist
-				     (update gensym-alist
-					     (cadr instruction)
-					     (constantly (dec stack-value))))
-			       (` assign prev , (dec stack-value))))
-			 (foldr (lambda (term acc)
-				  (if (get gensym-alist term)
-				      (cons '$
-					    (cons (get gensym-alist term)
-						  acc))
-				      (cons term acc)))
-				'()
-				instruction))
-		     (if (and (eq? (type instruction) 'symbol)
-			      (get gensym-alist instruction))
-			 (list '$ (get gensym-alist instruction))
-			 instruction))
-		 fixed))
-	      '()
-	      instructions))))
+      (map (lambda (instruction)
+	     (if (and (list? instruction)
+		      (eq? (car instruction) 'bind))
+		 (` label ,@ (cdr instruction))
+		 instruction))
+	   (reverse
+	    (foldl (lambda (fixed instruction)
+		     (cons
+		      (if (list? instruction)
+			  (if (or (eq? (car instruction) 'assign)
+				  (eq? (car instruction) 'bind))
+			      (if (or (nil? fixed)
+				      (eq? (caar fixed) 'assign)
+				      (eq? (caar fixed) 'bind))
+				  (progn
+				    (set! 'stack-value (inc stack-value))
+				    (if (eq? (car instruction) 'assign)
+					(set! 'gensym-alist
+					      (update gensym-alist
+						      (cadr instruction)
+						      (constantly (dec stack-value))))
+					'())
+				    (if (eq? (car instruction) 'assign)
+					(` assign arg ,(dec stack-value) ,(dec stack-value))
+					(` bind ,(cadr instruction) arg ,(dec stack-value))))
+				  (progn
+				    (set! 'stack-value (inc stack-value))
+				    (set! 'gensym-alist
+					  (update gensym-alist
+						  (cadr instruction)
+						  (constantly (dec stack-value))))
+				    (` assign prev , (dec stack-value))))
+			      (foldr (lambda (term acc)
+				       (if (get gensym-alist term)
+					   (cons '$
+						 (cons (get gensym-alist term)
+						       acc))
+					   (cons term acc)))
+				     '()
+				     instruction))
+			  (if (and (eq? (type instruction) 'symbol)
+				   (get gensym-alist instruction))
+			      (list '$ (get gensym-alist instruction))
+			      instruction))
+		      fixed))
+		   '()
+		   instructions)))))
 
 (define (scan f basis coll)
     (reverse
@@ -613,6 +673,7 @@
 		  instruction)
 		 ((or (eq? (car instruction) 'assign)
 		      (eq? (car instruction) 'branch)
+		      (eq? (car instruction) 'bind)
 		      (and (eq? (count instruction) 2)
 			   (eq? (car instruction) '$)))
 		  instruction)
@@ -638,18 +699,30 @@
 	   '()
 	   instructions))
 
-(define (optimize instructions)
-    (add-tailcalls
-     (add-gosubs
-      (fix-branches
-       (fix-assignments
-	instructions)))))
+(define (mark-symbols-for-no-lookup instructions)
+    (map (lambda (instruction)
+	   (cond ((atom? instruction) instruction)
+		 ((and (or (eq? (car instruction) 'quote)
+			   (eq? (car instruction) 'label)))
+		  (if (eq? (type (cadr instruction)) 'symbol)
+		      (` ,(car instruction) ~ ,@(cdr instruction))
+		      instruction))
+		 (else instruction)))
+	 instructions))
 
-(define (compile lambda-expression)
-    (assemble
-     (map (lambda (instruction)
-	    (match instruction
-		   ((code ,@ lines)
+(define (optimize instructions)
+    (mark-symbols-for-no-lookup
+     (add-tailcalls
+      (add-gosubs
+       (fix-branches
+	(fix-assignments
+	 (insert-bindings
+	  instructions)))))))
+
+(define (to-assembly lambda-expression)
+  (map (lambda (instruction)
+	 (match instruction
+	   ((code ,@ lines)
 		    (` code ,@(optimize lines)))
 		   (else instruction)))
 	  (optimize
@@ -657,9 +730,12 @@
 	    (inline-atoms
 	     (M
 	      (macroexpand-all
-	       lambda-expression))))))))
+	       lambda-expression)))))))
 
-(defmacro (define-compiled-fn name-and-args body)
-    (destructuring-bind (, name ,@ args) name-and-args
-      (` label , name (compile (quote (lambda , args , body))))))
+(define (compile lambda-expression)
+    (assemble (to-assembly lambda-expression)))
+
+(defmacro (def-comp call-form body)
+    (` define ,(car call-form)
+       (compile (quote (lambda ,(cdr call-form) , body)))))
 

@@ -103,20 +103,22 @@ func main() {
 		fmt.Printf("error loading file: %v", loadErr)
 		return
 	}
+
 	Repl(&frame)
-	// _, v, _ := Read("(define fib (compile '(lambda (n) (if (> 2 n) 1 (+ (fib (- n 1)) (fib (- n 2)))))))")
+	
+	// _, v, _ := Read("(def-comp (map* fn2 coll2) (reverse (foldl (lambda (acc e) (cons (fn2 e) acc))'() coll2)))")
 	// _, err := Eval(v, &frame)
 	// if err != nil {
 	// 	fmt.Printf("error evaluating: %v", err)
 	// 	return
 	// }
 
-	// _, v, _ = Read("(fib 2)")
+
+	// _, v, _ = Read("(map* (lambda (generated) (map* generated '(1 2 3))) (list inc dec))")
 	// result, err := Eval(v, &frame)
 	// if err != nil {
 	// 	fmt.Printf("error evaluating: %v", err)
 	// 	return
 	// }
-
 	// fmt.Printf("%v", Print(result))
 }

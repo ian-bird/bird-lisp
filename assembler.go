@@ -2,8 +2,17 @@ package main
 
 import "fmt"
 
-func assemble(code []Value) (Value, error) {
+func newChildEnv(parent *Frame) Frame {
+	return Frame{
+		parent:   parent,
+		bindings: make(map[string]Value),
+	}
+}
+
+func assemble(code []Value, env *Frame) (Value, error) {
 	instructions := make([]Instruction, 0, len(code))
+
+	functionEnvironment := newChildEnv(env)
 
 	parseArgs := func(lineValues []Value) ([]Value, []InstructionValueClass) {
 		values := make([]Value, 0)
@@ -30,7 +39,10 @@ func assemble(code []Value) (Value, error) {
 					values = append(values, currentValue)
 					valueClasses = append(valueClasses, ReturnRegister)
 					i += 1
-					// everything else is a constant value
+				case "~":
+					values = append(values, lineValues[i+1])
+					valueClasses = append(valueClasses, Quoted)
+					i += 2
 				default:
 					values = append(values, currentValue)
 					valueClasses = append(valueClasses, Const)
@@ -79,7 +91,7 @@ func assemble(code []Value) (Value, error) {
 						valueClasses: valueClasses,
 					})
 				case "code":
-					codeInstructions, err := assemble(lineValues[1:])
+					codeInstructions, err := assemble(lineValues[1:], &functionEnvironment)
 					if err != nil {
 						return Value{
 							Car:   nil,
@@ -218,6 +230,13 @@ func assemble(code []Value) (Value, error) {
 						values:       values,
 						valueClasses: valueClasses,
 					})
+				case "quote":
+					values, valueClasses := parseArgs(lineValues[1:])
+					instructions = append(instructions, Instruction{
+						class:        Literal,
+						values:       values,
+						valueClasses: valueClasses,
+					})
 				default:
 					return Value{
 						Car:   nil,
@@ -249,10 +268,21 @@ func assemble(code []Value) (Value, error) {
 			}
 		}
 	}
+	// we're following as closely as possible the structure
+	// of interpreted functions:
+	//
+	// bindings go in car (not needed for compiled fns, data is
+	// passed in directly on the stack), lexically scoped env
+	// pointer goes in value, and the code goes in cdr.
 	return Value{
-		Car:   nil,
-		Cdr:   nil,
+		Car: nil,
+		Cdr: &Value{
+			Car:   nil,
+			Cdr:   nil,
+			Type:  Nil,
+			Value: instructions,
+		},
 		Type:  CompiledFunction,
-		Value: instructions,
+		Value: &functionEnvironment,
 	}, nil
 }

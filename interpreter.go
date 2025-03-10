@@ -648,7 +648,7 @@ func Eval(toEvaluate Value, frame *Frame) (Value, error) {
 					if err != nil {
 						return nilValue, passUpError(err)
 					}
-					result, err := assemble(toArray(evaluatedArg))
+					result, err := assemble(toArray(evaluatedArg), frame)
 					if err != nil {
 						return nilValue, passUpError(err)
 					}
@@ -683,7 +683,7 @@ func Eval(toEvaluate Value, frame *Frame) (Value, error) {
 				}
 				return result, nil
 			case CompiledFunction:
-				instructions := firstThing.Value.([]Instruction)
+				instructions := firstThing.Cdr.Value.([]Instruction)
 				workspace := make([]Value, len(instructions) / 2 + 1)
 				for i, arg := range arguments {
 					var evaluatedArg Value 
@@ -699,9 +699,11 @@ func Eval(toEvaluate Value, frame *Frame) (Value, error) {
 					callerIsInterpreted: true,
 					returnLine:  0,
 					callerCode: []Instruction {},
+					callerEnv: nil,
+					originalBindings: nil,
 				}
 				stack = append(stack, newStackFrame)
-				result, err := exec(firstThing.Value.([]Instruction), frame)
+				result, err := exec(firstThing)
 				if err != nil {
 					return nilValue, passUpError(err)
 				}

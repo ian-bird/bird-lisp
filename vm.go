@@ -37,6 +37,7 @@ const (
 	Stack
 	Const
 	ReturnRegister
+	Quoted
 )
 
 type Instruction struct {
@@ -50,15 +51,17 @@ var returnValue Value
 // the stackframe contains all information
 // regarding the working state of a single function
 type StackFrame struct {
-	workspace           []Value       // this is where in progress variables are placed, and where args are loaded
-	callerIsInterpreted bool          // do we need to load the caller at the end or halt?
-	returnLine          int           //  if we're loading the caller, what line do we set the IP to?
-	callerCode          []Instruction // what block of code needs to be loaded?
+	workspace           []Value          // this is where in progress variables are placed, and where args are loaded
+	callerIsInterpreted bool             // do we need to load the caller at the end or halt?
+	returnLine          int              //  if we're loading the caller, what line do we set the IP to?
+	callerCode          []Instruction    // what block of code needs to be loaded?
+	callerEnv           *Frame           //what env to load on exit
+	originalBindings    map[string]Value // what bindings need to be loaded into the caller environment?
 }
 
 var stack []StackFrame
 
-func accessValues(i Instruction) []Value {
+func accessValues(i Instruction, env Frame) []Value {
 	result := make([]Value, len(i.values))
 	for vNum := 0; vNum < len(i.values); vNum++ {
 		valueType := i.valueClasses[vNum]
@@ -70,6 +73,17 @@ func accessValues(i Instruction) []Value {
 		case Stack:
 			result[vNum] = stack[len(stack)-1].workspace[int(value.Value.(float64))]
 		case Const:
+			if value.Type == Symbol {
+				binding, err := lookup(env, value)
+				if err != nil {
+					result[vNum] = value
+				} else {
+					result[vNum] = binding
+				}
+			} else {
+				result[vNum] = value
+			}
+		case Quoted:
 			result[vNum] = value
 		case ReturnRegister:
 			result[vNum] = returnValue
@@ -85,7 +99,10 @@ func accessValues(i Instruction) []Value {
 	return result
 }
 
-func exec(instructions []Instruction, env *Frame) (Value, error) {
+func exec(compiledFunction Value) (Value, error) {
+	instructions := compiledFunction.Cdr.Value.([]Instruction)
+	env := compiledFunction.Value.(*Frame)
+
 	nilValue := Value{
 		Car:   nil,
 		Cdr:   nil,
@@ -94,13 +111,26 @@ func exec(instructions []Instruction, env *Frame) (Value, error) {
 	}
 	instructionPointer := 0
 
+	currentBindings := func() map[string]Value {
+		result := make(map[string]Value, len(env.bindings))
+		if env.bindings == nil {
+			return nil
+		}
+
+		for k, v := range env.bindings {
+			result[k] = v
+		}
+		return result
+	}
+
 	if len(instructions) == 0 {
 		return nilValue, fmt.Errorf("exec: tried to execute empty compiled function")
 	}
 
+executionLoop:
 	for len(stack) > 0 {
 		instruction := instructions[instructionPointer]
-		values := accessValues(instruction)
+		values := accessValues(instruction, *env)
 
 		switch instruction.class {
 		case Halt:
@@ -110,26 +140,29 @@ func exec(instructions []Instruction, env *Frame) (Value, error) {
 			// we have to exit execution so that control passes back to the
 			// caller.
 			if stack[len(stack)-1].callerIsInterpreted {
+				env.bindings = stack[len(stack)-1].originalBindings
 				stack = stack[:len(stack)-1]
-				break
+				break executionLoop
 			}
 
 			// if the stack length is 1 we need to exit as well so the value is returned
 			if len(stack) == 1 {
 				stack = []StackFrame{}
-				break
+				break executionLoop
 			}
 
 			// otherwise, control passes to calling compiled function
 			instructions = stack[len(stack)-1].callerCode
 			instructionPointer = stack[len(stack)-1].returnLine
+			env = stack[len(stack)-1].callerEnv
+			env.bindings = stack[len(stack)-1].originalBindings
 			stack = stack[:len(stack)-1]
 		case Funcall:
 			// this call will use the stack if its a compiled function
 			// first we need to figure out what's going to be ran, though.
 			function := values[0]
 			switch function.Type {
-			case CompiledFunction:
+			case InterpretedFunction, CompiledFunction, SpecialForm:
 				// do nothing
 			case Symbol:
 				toCall, err := lookup(*env, function)
@@ -143,23 +176,46 @@ func exec(instructions []Instruction, env *Frame) (Value, error) {
 
 			switch function.Type {
 			case CompiledFunction:
-				stackWorkspace := make([]Value, len(instructions) / 2 + 1)
-				copy(stackWorkspace, values[1:])
-
+				// we can't load the code just yet since we need to construct
+				// our continuation first. So create the new workspace
 				newFrame := StackFrame{
-					workspace:           stackWorkspace,
+					workspace: func() []Value {
+						result := make([]Value, len(function.Cdr.Value.([]Instruction))/2+1)
+						copy(result, values[1:])
+						return result
+					}(),
 					callerIsInterpreted: false,
 					returnLine:          instructionPointer,
 					callerCode:          instructions,
+					callerEnv:           env,
+					originalBindings:    nil,
 				}
-				instructionPointer = 0
-				instructions = function.Value.([]Instruction)
+				instructionPointer = -1
+				instructions = function.Cdr.Value.([]Instruction)
 				stack = append(stack, newFrame)
+				env = function.Value.(*Frame)
 			case InterpretedFunction:
 				args := values[1:]
 
 				var err error
 				returnValue, err = apply(function, args)
+				if err != nil {
+					return nilValue, fmt.Errorf("exec: %v", err)
+				}
+			case SpecialForm:
+				// need to quote the special form so that eval doesnt explode
+				var err error
+
+				quotedValues := make([]Value, 0, len(values))
+				for _, value := range values {
+					quotedValues = append(quotedValues, toList([]Value{{
+						Car:   nil,
+						Cdr:   nil,
+						Type:  Symbol,
+						Value: "quote",
+					}, value}))
+				}
+				returnValue, err = Eval(toList(quotedValues), env)
 				if err != nil {
 					return nilValue, fmt.Errorf("exec: %v", err)
 				}
@@ -171,7 +227,7 @@ func exec(instructions []Instruction, env *Frame) (Value, error) {
 			// first we need to figure out what's going to be ran, though.
 			function := values[0]
 			switch function.Type {
-			case CompiledFunction:
+			case InterpretedFunction, CompiledFunction, SpecialForm:
 				// do nothing
 			case Symbol:
 				// look up the binding
@@ -186,20 +242,38 @@ func exec(instructions []Instruction, env *Frame) (Value, error) {
 
 			switch function.Type {
 			case CompiledFunction:
+				instructionPointer = -1
+				instructions = function.Cdr.Value.([]Instruction)
 				// compiled function can be ran without consuming stack.
 				// return data remains unchanged, but blow away stack variables
-				stackWorkspace := make([]Value, len(instructions) / 2 + 1)
+				stackWorkspace := make([]Value, len(instructions)/2+1)
 				copy(stackWorkspace, values[1:])
-
-				instructionPointer = -1
-				instructions = function.Value.([]Instruction)
 				stack[len(stack)-1].workspace = stackWorkspace
+				env.bindings = stack[len(stack)-1].originalBindings // roll back bindings before jumping
+				env = function.Value.(*Frame)
 			case InterpretedFunction:
 				// can't avoid cost of making a call to an interpreted function
 				args := values[1:]
 
 				var err error
 				returnValue, err = apply(function, args)
+				if err != nil {
+					return nilValue, fmt.Errorf("exec: %v", err)
+				}
+			case SpecialForm:
+				// need to quote the special form so that eval doesnt explode
+				var err error
+
+				quotedValues := make([]Value, 0, len(values))
+				for _, value := range values {
+					quotedValues = append(quotedValues, toList([]Value{{
+						Car:   nil,
+						Cdr:   nil,
+						Type:  Symbol,
+						Value: "quote",
+					}, value}))
+				}
+				returnValue, err = Eval(toList(quotedValues), env)
 				if err != nil {
 					return nilValue, fmt.Errorf("exec: %v", err)
 				}
@@ -214,14 +288,53 @@ func exec(instructions []Instruction, env *Frame) (Value, error) {
 				instructionPointer = int(instruction.values[1].Value.(float64)) - 1 // -1 because its added at the end of processing
 			}
 		case Label:
-			// update the environment
-			sym := values[0]
-			env.bindings[sym.Value.(string)] = values[1]
+			// store context if needed
+			if stack[len(stack)-1].originalBindings == nil {
+				stack[len(stack)-1].originalBindings = env.bindings
+				env.bindings = currentBindings()
+			}
+
+			// update the binding
+			env.bindings[values[0].Value.(string)] = values[1]
 			returnValue = nilValue
 		case Literal:
-			// literals can just be loaded into the return reg
-			// and then we continue on
-			returnValue = values[0]
+			if values[0].Type == CompiledFunction {
+				// scan up the compiled function stack and the spaghetti stack and 
+				// duplicate bindings if theyre going to be blown away
+				
+				// now we're going to scan up create a new environment for the fuction we're 
+				// returning, were we store the current data where needed.
+				
+				numFramesInEnv := 0
+				for envP := values[0].Value.(*Frame); envP != nil; envP = envP.parent {
+					numFramesInEnv++
+				}
+
+				newEnvs := make([]Frame, numFramesInEnv + 1)
+				newEnvP := &newEnvs[0]
+				currentEnvI := 0
+				for existingEnvP := values[0].Value.(*Frame); existingEnvP != nil; existingEnvP = existingEnvP.parent {
+					newEnvP.bindings = existingEnvP.bindings
+					currentEnvI++
+					newEnvP.parent = &newEnvs[currentEnvI]
+					newEnvP = &newEnvs[currentEnvI]
+				}
+				// we need to zero out the last pointer
+				newEnvs[len(newEnvs) - 2].parent = nil
+				returnValue = Value {
+					Car: values[0].Car,
+					Cdr: values[0].Cdr,
+					Type: values[0].Type,
+					Value: &newEnvs[0],
+				}
+
+				// do we need to duplicate what the pointer is on currently?
+				
+			} else {
+				// otherwise, literals can just be loaded into the return reg
+				// and then we continue on
+				returnValue = values[0]
+			}
 		case Assign:
 			// load the value into the correct slot in the stack workspace
 			val := values[0]
@@ -301,8 +414,8 @@ func exec(instructions []Instruction, env *Frame) (Value, error) {
 				Value: result,
 			}
 		case Times:
-			var result float64
-			for _, value := range values {
+			result := values[0].Value.(float64)
+			for _, value := range values[1:] {
 				result *= value.Value.(float64)
 			}
 			returnValue = Value{
