@@ -2,92 +2,9 @@ package main
 
 import "fmt"
 
-type InstructionClass int
-
-const (
-	Halt InstructionClass = iota
-	Funcall
-	Tailcall
-	Branch
-	Label
-	Literal
-	Assign
-	Atom
-	Car
-	Cdr
-	Cons
-	Eq
-	GreaterThan
-	Plus
-	Minus
-	Times
-	Div
-	Mod
-	Gensym
-	Set
-	Type
-	Macroexpand
-	Bound
-	MakeClosure
-	MakeEnv
-	EnvRef
-)
-
-type InstructionValueClass int
-
-const (
-	Arg InstructionValueClass = iota
-	Stack
-	Const
-	ReturnRegister
-)
-
-type Instruction struct {
-	class        InstructionClass
-	values       []Value
-	valueClasses []InstructionValueClass
-}
-
 var returnValue Value
 
-// the stackframe contains all information
-// regarding the working state of a single function
-type StackFrame struct {
-	workspace           []Value       // this is where in progress variables are placed, and where args are loaded
-	callerIsInterpreted bool          // do we need to load the caller at the end or halt?
-	returnLine          int           //  if we're loading the caller, what line do we set the IP to?
-	callerCode          []Instruction // what block of code needs to be loaded?
-	callerEnv           Frame         //what env to load on exit
-}
-
 var stack []StackFrame
-
-func accessValues(i Instruction) []Value {
-	result := make([]Value, len(i.values))
-	for vNum := 0; vNum < len(i.values); vNum++ {
-		valueType := i.valueClasses[vNum]
-		value := i.values[vNum]
-		switch valueType {
-		// args are loaded onto the stack before calling
-		case Arg:
-			result[vNum] = stack[len(stack)-1].workspace[int(value.Value.(float64))]
-		case Stack:
-			result[vNum] = stack[len(stack)-1].workspace[int(value.Value.(float64))]
-		case Const:
-			result[vNum] = value
-		case ReturnRegister:
-			result[vNum] = returnValue
-		default:
-			result[vNum] = Value{
-				Car:   nil,
-				Cdr:   nil,
-				Type:  Nil,
-				Value: nil,
-			}
-		}
-	}
-	return result
-}
 
 func exec(compiledFunction Value) (Value, error) {
 	instructions := compiledFunction.Cdr.Value.([]Instruction)
@@ -99,6 +16,33 @@ func exec(compiledFunction Value) (Value, error) {
 			// after a make-env, and we need the
 			bindings: make(map[string]Value),
 		}
+	}
+
+	accessValues := func(i Instruction) []Value {
+		result := make([]Value, len(i.values))
+		for vNum := 0; vNum < len(i.values); vNum++ {
+			valueType := i.valueClasses[vNum]
+			value := i.values[vNum]
+			switch valueType {
+			// args are loaded onto the stack before calling
+			case Arg:
+				result[vNum] = stack[len(stack)-1].workspace[int(value.Value.(float64))]
+			case Stack:
+				result[vNum] = stack[len(stack)-1].workspace[int(value.Value.(float64))]
+			case Const:
+				result[vNum] = value
+			case ReturnRegister:
+				result[vNum] = returnValue
+			default:
+				result[vNum] = Value{
+					Car:   nil,
+					Cdr:   nil,
+					Type:  Nil,
+					Value: nil,
+				}
+			}
+		}
+		return result
 	}
 
 	env := newEnv(compiledFunction)
