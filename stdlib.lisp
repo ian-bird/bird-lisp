@@ -1,6 +1,6 @@
 (label list (lambda elements elements))
 
-(label nil? (lambda (v) (eq? v '())))
+(label nil? (macro (v) (list 'eq? v (list 'quote '()))))
 
 ;; needs to be updated to use gensym
 (label define
@@ -95,7 +95,8 @@
     ;; since theyve already been evaluated on the way in,
     ;; and we don't want to evaluate again on the way into
     ;; the eval lambda
-    (eval (map (lambda (e) (list 'quote e)) (cons fn args))))
+    (eval (cons (if (eq? (type fn) 'symbol) fn (list 'quote fn))
+	   (map (lambda (e) (list 'quote e)) args))))
 
 (define identity (lambda (x) x))
 
@@ -123,7 +124,7 @@
     (apply or (map f coll)))
 
 (define zip (lambda lists
-	      (if (any? nil? lists)
+	      (if (any? (lambda (x)(nil? x)) lists)
 		  '()
 		  (cons (map car lists) (apply zip (map cdr lists))))))
 
@@ -447,7 +448,93 @@
 			      (` (match? (quote ,(car pattern)) , match-on)
 				 (destructuring-bind (quote ,(car pattern)) , match-on (progn ,@ (cdr pattern)))))
 			    cases)
-	       ,@ else-statement))))
+		     ,@ else-statement))))
+
+(define (flatten coll)
+    (mapcat (lambda (x)
+	   (if (list? x)
+	       (flatten x)
+	       (list x)))
+	    coll))
+
+(define (postwalk form fn)
+    (if (list? form)
+	(fn (map (lambda (e) (postwalk e fn)) form))
+	(fn form)))
+
+(define (prewalk form fn)
+    (if (list? form)
+	(map (lambda (e) (prewalk e fn)) (fn form))
+	(fn form)))
+
+(define (unique coll)
+    (foldr (lambda (e acc)
+	     (if (any? (partial eq? e) acc)
+		 acc
+		 (cons e acc)))
+	   '()
+	   coll))
+
+(define (add-env-ref-calls expression free-symbols)
+    (if (list? expression)
+	(if (eq? (car expression) 'make-closure)
+	    expression
+	    (map (lambda (e) (add-env-ref-calls e free-symbols))
+		 expression))
+	(if (any? (partial eq? expression) free-symbols)
+	    (` env-ref , expression)
+	    expression)))
+
+(define (referenced-free-variables expression free-variables)
+    (unique
+     (if (and (list? expression)
+	      (not (eq? (car expression) 'quote)))
+	 (mapcat (lambda (e) (referenced-free-variables e free-variables))
+		 expression)
+	 (filter (partial eq? expression) free-variables))))
+
+(define (extract-labels form)
+    (if (list? form)
+	(if (eq? (car form) 'label)
+	    (append (list (cadr form))
+		    (if (list? (nth form 2))
+			(mapcat extract-labels (nth form 2))
+			'()))
+	    (mapcat extract-labels form))
+	'()))
+
+(define (get-env-variables lambda-expression)
+    (append (cadr lambda-expression)
+	    (extract-labels
+	     ;; dont want to read stuff from child lambdas
+	     (prewalk (nth lambda-expression 2)
+		      (lambda (e)
+			(if (and (list? e)
+				 (eq? (car e) 'lambda))
+			    '()
+			    e))))))
+
+(define (convert-lambda lambda-expression free-vars)
+    (let ((env-vars (get-env-variables lambda-expression))
+	  (body (add-env-ref-calls
+		 (convert-closures (nth lambda-expression 2) (append env-vars free-vars))
+		 free-vars))
+	  (closed-vars (referenced-free-variables body free-vars))
+	  (replacement-lambda (` lambda , (cadr lambda-expression)
+				, body)))
+      (if (> (count closed-vars) 0)
+	  (` make-closure , replacement-lambda (make-env ,@ closed-vars))
+	  replacement-lambda)))
+
+(define (convert-closures expression free-vars)
+    (if (list? expression)
+	(if (eq? (car expression) 'lambda)
+	    (convert-lambda expression (filter (lambda (free-var)
+						 (none? (partial eq? free-var) (cadr expression)))
+					       free-vars))
+	    (map (lambda (e) (convert-closures e free-vars))
+		 expression))
+	expression))
 
 ;; M expression converts a non-cps form
 ;; into cps form
@@ -462,7 +549,7 @@
 
 (define (T expression cont)
     (if (atom? expression)
-	(` , cont ,(M expression))
+	(` , cont , expression)
 	(match expression
 	       ((lambda ,@ _)
 		(` , cont ,(M expression)))
@@ -487,8 +574,11 @@
 		       clauses))
 	       ((quote , quoted)
 		(` , cont (quote , quoted)))
+
+	       ((gensym)
+		(` call-with-cont gensym , cont))
 	       
-	       ((, _ , _ ,@ _)
+	       ((, _ ,@ _)
 		(let ((gensyms (map (lambda (_) (gensym)) expression))
 		      (gensyms-and-symbols (zip gensyms expression)))
 		  (foldr (lambda (gensym-and-symbol acc)
@@ -545,95 +635,54 @@
 
 	   (else (list cps-form))))
 
-(define (flatten coll)
-    (mapcat (lambda (x)
-	   (if (list? x)
-	       (flatten x)
-	       (list x)))
-	    coll))
-
-;; need to define how to look up bindings for sub functions
-(define (insert-bindings instructions)
-    (let ((extract-args (lambda (form callback)
-			  (let ((these-args
-				  (map last
-				       (take-while (lambda (instruction)
-						     (and (list? instruction)
-							  (eq? (car instruction) 'assign)))
-						   form))))
-			    (append these-args
-				    (map (lambda (x) (callback x callback))
-					 (filter (lambda (instruction)
-						   (and (list? instruction)
-							(list? (car instruction))))
-						 form))))))
-	  (needs-binding (lambda (form arg)
-			   (any? (partial eq? arg)
-				 (flatten (filter (lambda (x)
-						    (and ( list? x)
-							 (list? (car x))))
-						  form)))))
-	  (args (extract-args instructions extract-args))
-	  (to-bind (filter (partial needs-binding instructions)
-			   (filter atom? args))))
-      (map (lambda (instruction)
-	     (if (and (list? instruction)
-		     (eq? (car instruction) 'assign)
-		     (any? (partial eq? (cadr instruction)) to-bind))
-		 (` bind , (cadr instruction))
-		 instruction))
-	   instructions)))
-
 (define (fix-assignments instructions)
     (let ((stack-value 0)
 	  (gensym-alist '()))
-      (map (lambda (instruction)
-	     (if (and (list? instruction)
-		      (eq? (car instruction) 'bind))
-		 (` label ,@ (cdr instruction))
-		 instruction))
-	   (reverse
-	    (foldl (lambda (fixed instruction)
-		     (cons
-		      (if (list? instruction)
-			  (if (or (eq? (car instruction) 'assign)
-				  (eq? (car instruction) 'bind))
-			      (if (or (nil? fixed)
-				      (eq? (caar fixed) 'assign)
-				      (eq? (caar fixed) 'bind))
-				  (progn
-				    (set! 'stack-value (inc stack-value))
-				    (if (eq? (car instruction) 'assign)
-					(set! 'gensym-alist
-					      (update gensym-alist
-						      (cadr instruction)
-						      (constantly (dec stack-value))))
-					'())
-				    (if (eq? (car instruction) 'assign)
-					(` assign arg ,(dec stack-value) ,(dec stack-value))
-					(` bind ,(cadr instruction) arg ,(dec stack-value))))
-				  (progn
-				    (set! 'stack-value (inc stack-value))
-				    (set! 'gensym-alist
-					  (update gensym-alist
-						  (cadr instruction)
-						  (constantly (dec stack-value))))
-				    (` assign prev , (dec stack-value))))
-			      (foldr (lambda (term acc)
-				       (if (get gensym-alist term)
-					   (cons '$
-						 (cons (get gensym-alist term)
-						       acc))
-					   (cons term acc)))
-				     '()
-				     instruction))
-			  (if (and (eq? (type instruction) 'symbol)
-				   (get gensym-alist instruction))
-			      (list '$ (get gensym-alist instruction))
-			      instruction))
-		      fixed))
-		   '()
-		   instructions)))))
+      (reverse
+       (foldl (lambda (fixed instruction)
+		(cons
+		 (cond ((list? instruction)
+			(cond ((list? (car instruction)) ; if this is a code block dont touch it
+			       instruction) ; it'll get fixed on a later pass
+			      ((eq? (car instruction) 'assign)
+			       (if (or (nil? fixed)
+				       (eq? (caar fixed) 'assign))
+				   (progn
+				     (set! 'stack-value (inc stack-value))
+				     (set! 'gensym-alist
+					   (update gensym-alist
+						   (cadr instruction)
+						   (constantly (dec stack-value))))
+				     (` assign arg ,(dec stack-value) ,(dec stack-value)))
+				   (progn
+				     (set! 'stack-value (inc stack-value))
+				     (set! 'gensym-alist
+					   (update gensym-alist
+						   (cadr instruction)
+						   (constantly (dec stack-value))))
+				     (` assign prev , (dec stack-value)))))
+			      ((eq? (car instruction) 'make-env)
+			       (foldr (lambda (term acc)
+					(if (get gensym-alist term)
+					    (` $ ,(get gensym-alist term) , term ,@ acc)
+					    (cons term acc)))
+				      '()
+				      instruction))
+			      (else (foldr (lambda (term acc)
+					     (if (get gensym-alist term)
+						 (cons '$
+						       (cons (get gensym-alist term)
+							     acc))
+						 (cons term acc)))
+					   '()
+					   instruction))))
+		       ((and (eq? (type instruction) 'symbol)
+			      (get gensym-alist instruction))
+			(list '$ (get gensym-alist instruction)))
+		       (else instruction))
+		 fixed))
+	      '()
+	      instructions))))
 
 (define (scan f basis coll)
     (reverse
@@ -671,9 +720,8 @@
     (map (lambda (instruction)
 	   (cond ((atom? instruction)
 		  instruction)
-		 ((or (eq? (car instruction) 'assign)
-		      (eq? (car instruction) 'branch)
-		      (eq? (car instruction) 'bind)
+		 ((or (any? (partial eq? (car instruction))
+			    '(assign branch make-closure make-env env-ref))
 		      (and (eq? (count instruction) 2)
 			   (eq? (car instruction) '$)))
 		  instruction)
@@ -699,38 +747,27 @@
 	   '()
 	   instructions))
 
-(define (mark-symbols-for-no-lookup instructions)
-    (map (lambda (instruction)
-	   (cond ((atom? instruction) instruction)
-		 ((and (or (eq? (car instruction) 'quote)
-			   (eq? (car instruction) 'label)))
-		  (if (eq? (type (cadr instruction)) 'symbol)
-		      (` ,(car instruction) ~ ,@(cdr instruction))
-		      instruction))
-		 (else instruction)))
-	 instructions))
-
 (define (optimize instructions)
-    (mark-symbols-for-no-lookup
-     (add-tailcalls
-      (add-gosubs
-       (fix-branches
-	(fix-assignments
-	 (insert-bindings
-	  instructions)))))))
+    (map               (lambda (instruction)
+	   (match instruction
+		  ((code ,@ lines)
+		   (` code ,@(optimize lines)))
+		  (else instruction)))
+	 (add-tailcalls
+	  (add-gosubs
+	   (fix-branches
+	    (fix-assignments
+	     instructions))))))
 
 (define (to-assembly lambda-expression)
-  (map (lambda (instruction)
-	 (match instruction
-	   ((code ,@ lines)
-		    (` code ,@(optimize lines)))
-		   (else instruction)))
-	  (optimize
-	   (unfold
-	    (inline-atoms
-	     (M
-	      (macroexpand-all
-	       lambda-expression)))))))
+    (optimize
+     (unfold
+      (inline-atoms
+       (M
+	(convert-closures
+	 (macroexpand-all
+	  lambda-expression)
+	 '()))))))
 
 (define (compile lambda-expression)
     (assemble (to-assembly lambda-expression)))

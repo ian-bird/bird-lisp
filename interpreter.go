@@ -699,8 +699,7 @@ func Eval(toEvaluate Value, frame *Frame) (Value, error) {
 					callerIsInterpreted: true,
 					returnLine:  0,
 					callerCode: []Instruction {},
-					callerEnv: nil,
-					originalBindings: nil,
+					callerEnv: Frame{},
 				}
 				stack = append(stack, newStackFrame)
 				result, err := exec(firstThing)

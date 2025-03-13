@@ -28,6 +28,9 @@ const (
 	Type
 	Macroexpand
 	Bound
+	MakeClosure
+	MakeEnv
+	EnvRef
 )
 
 type InstructionValueClass int
@@ -37,7 +40,6 @@ const (
 	Stack
 	Const
 	ReturnRegister
-	Quoted
 )
 
 type Instruction struct {
@@ -51,17 +53,16 @@ var returnValue Value
 // the stackframe contains all information
 // regarding the working state of a single function
 type StackFrame struct {
-	workspace           []Value          // this is where in progress variables are placed, and where args are loaded
-	callerIsInterpreted bool             // do we need to load the caller at the end or halt?
-	returnLine          int              //  if we're loading the caller, what line do we set the IP to?
-	callerCode          []Instruction    // what block of code needs to be loaded?
-	callerEnv           *Frame           //what env to load on exit
-	originalBindings    map[string]Value // what bindings need to be loaded into the caller environment?
+	workspace           []Value       // this is where in progress variables are placed, and where args are loaded
+	callerIsInterpreted bool          // do we need to load the caller at the end or halt?
+	returnLine          int           //  if we're loading the caller, what line do we set the IP to?
+	callerCode          []Instruction // what block of code needs to be loaded?
+	callerEnv           Frame         //what env to load on exit
 }
 
 var stack []StackFrame
 
-func accessValues(i Instruction, env Frame) []Value {
+func accessValues(i Instruction) []Value {
 	result := make([]Value, len(i.values))
 	for vNum := 0; vNum < len(i.values); vNum++ {
 		valueType := i.valueClasses[vNum]
@@ -73,17 +74,6 @@ func accessValues(i Instruction, env Frame) []Value {
 		case Stack:
 			result[vNum] = stack[len(stack)-1].workspace[int(value.Value.(float64))]
 		case Const:
-			if value.Type == Symbol {
-				binding, err := lookup(env, value)
-				if err != nil {
-					result[vNum] = value
-				} else {
-					result[vNum] = binding
-				}
-			} else {
-				result[vNum] = value
-			}
-		case Quoted:
 			result[vNum] = value
 		case ReturnRegister:
 			result[vNum] = returnValue
@@ -101,7 +91,17 @@ func accessValues(i Instruction, env Frame) []Value {
 
 func exec(compiledFunction Value) (Value, error) {
 	instructions := compiledFunction.Cdr.Value.([]Instruction)
-	env := compiledFunction.Value.(*Frame)
+
+	newEnv := func(compiledFunction Value) Frame {
+		return Frame{
+			parent: compiledFunction.Value.(*Frame),
+			// this cost has to be eaten up front since the first label could be
+			// after a make-env, and we need the
+			bindings: make(map[string]Value),
+		}
+	}
+
+	env := newEnv(compiledFunction)
 
 	nilValue := Value{
 		Car:   nil,
@@ -111,18 +111,6 @@ func exec(compiledFunction Value) (Value, error) {
 	}
 	instructionPointer := 0
 
-	currentBindings := func() map[string]Value {
-		result := make(map[string]Value, len(env.bindings))
-		if env.bindings == nil {
-			return nil
-		}
-
-		for k, v := range env.bindings {
-			result[k] = v
-		}
-		return result
-	}
-
 	if len(instructions) == 0 {
 		return nilValue, fmt.Errorf("exec: tried to execute empty compiled function")
 	}
@@ -130,7 +118,7 @@ func exec(compiledFunction Value) (Value, error) {
 executionLoop:
 	for len(stack) > 0 {
 		instruction := instructions[instructionPointer]
-		values := accessValues(instruction, *env)
+		values := accessValues(instruction)
 
 		switch instruction.class {
 		case Halt:
@@ -140,7 +128,6 @@ executionLoop:
 			// we have to exit execution so that control passes back to the
 			// caller.
 			if stack[len(stack)-1].callerIsInterpreted {
-				env.bindings = stack[len(stack)-1].originalBindings
 				stack = stack[:len(stack)-1]
 				break executionLoop
 			}
@@ -154,8 +141,8 @@ executionLoop:
 			// otherwise, control passes to calling compiled function
 			instructions = stack[len(stack)-1].callerCode
 			instructionPointer = stack[len(stack)-1].returnLine
+
 			env = stack[len(stack)-1].callerEnv
-			env.bindings = stack[len(stack)-1].originalBindings
 			stack = stack[:len(stack)-1]
 		case Funcall:
 			// this call will use the stack if its a compiled function
@@ -165,7 +152,7 @@ executionLoop:
 			case InterpretedFunction, CompiledFunction, SpecialForm:
 				// do nothing
 			case Symbol:
-				toCall, err := lookup(*env, function)
+				toCall, err := lookup(env, function)
 				if err != nil {
 					return nilValue, fmt.Errorf("exec funcall: %v", err)
 				}
@@ -188,12 +175,12 @@ executionLoop:
 					returnLine:          instructionPointer,
 					callerCode:          instructions,
 					callerEnv:           env,
-					originalBindings:    nil,
 				}
 				instructionPointer = -1
 				instructions = function.Cdr.Value.([]Instruction)
 				stack = append(stack, newFrame)
-				env = function.Value.(*Frame)
+				env = newEnv(function)
+
 			case InterpretedFunction:
 				args := values[1:]
 
@@ -215,7 +202,7 @@ executionLoop:
 						Value: "quote",
 					}, value}))
 				}
-				returnValue, err = Eval(toList(quotedValues), env)
+				returnValue, err = Eval(toList(quotedValues), &env)
 				if err != nil {
 					return nilValue, fmt.Errorf("exec: %v", err)
 				}
@@ -231,7 +218,7 @@ executionLoop:
 				// do nothing
 			case Symbol:
 				// look up the binding
-				toCall, err := lookup(*env, function)
+				toCall, err := lookup(env, function)
 				if err != nil {
 					return nilValue, fmt.Errorf("exec funcall: %v", err)
 				}
@@ -249,8 +236,8 @@ executionLoop:
 				stackWorkspace := make([]Value, len(instructions)/2+1)
 				copy(stackWorkspace, values[1:])
 				stack[len(stack)-1].workspace = stackWorkspace
-				env.bindings = stack[len(stack)-1].originalBindings // roll back bindings before jumping
-				env = function.Value.(*Frame)
+
+				env = newEnv(function)
 			case InterpretedFunction:
 				// can't avoid cost of making a call to an interpreted function
 				args := values[1:]
@@ -273,7 +260,7 @@ executionLoop:
 						Value: "quote",
 					}, value}))
 				}
-				returnValue, err = Eval(toList(quotedValues), env)
+				returnValue, err = Eval(toList(quotedValues), &env)
 				if err != nil {
 					return nilValue, fmt.Errorf("exec: %v", err)
 				}
@@ -285,56 +272,49 @@ executionLoop:
 			// then jump the instruction pointer to the target line
 			predicate := values[0]
 			if predicate.Type != Nil && (predicate.Type != Boolean || predicate.Value.(bool)) {
-				instructionPointer = int(instruction.values[1].Value.(float64)) - 1 // -1 because its added at the end of processing
+				instructionPointer = int(instruction.values[1].Value.(float64)) - 1
+				// -1 because its added at the end of processing
 			}
 		case Label:
-			// store context if needed
-			if stack[len(stack)-1].originalBindings == nil {
-				stack[len(stack)-1].originalBindings = env.bindings
-				env.bindings = currentBindings()
-			}
-
-			// update the binding
 			env.bindings[values[0].Value.(string)] = values[1]
+
 			returnValue = nilValue
-		case Literal:
-			if values[0].Type == CompiledFunction {
-				// scan up the compiled function stack and the spaghetti stack and 
-				// duplicate bindings if theyre going to be blown away
-				
-				// now we're going to scan up create a new environment for the fuction we're 
-				// returning, were we store the current data where needed.
-				
-				numFramesInEnv := 0
-				for envP := values[0].Value.(*Frame); envP != nil; envP = envP.parent {
-					numFramesInEnv++
-				}
-
-				newEnvs := make([]Frame, numFramesInEnv + 1)
-				newEnvP := &newEnvs[0]
-				currentEnvI := 0
-				for existingEnvP := values[0].Value.(*Frame); existingEnvP != nil; existingEnvP = existingEnvP.parent {
-					newEnvP.bindings = existingEnvP.bindings
-					currentEnvI++
-					newEnvP.parent = &newEnvs[currentEnvI]
-					newEnvP = &newEnvs[currentEnvI]
-				}
-				// we need to zero out the last pointer
-				newEnvs[len(newEnvs) - 2].parent = nil
-				returnValue = Value {
-					Car: values[0].Car,
-					Cdr: values[0].Cdr,
-					Type: values[0].Type,
-					Value: &newEnvs[0],
-				}
-
-				// do we need to duplicate what the pointer is on currently?
-				
-			} else {
-				// otherwise, literals can just be loaded into the return reg
-				// and then we continue on
-				returnValue = values[0]
+		case MakeClosure:
+			function := values[0]
+			environment := values[1]
+			returnValue = Value{
+				Car:   nil,
+				Cdr:   function.Cdr,
+				Type:  CompiledFunction,
+				Value: environment.Value,
 			}
+		case EnvRef:
+			var err error
+			returnValue, err = lookup(env, values[0])
+			if err != nil {
+				return nilValue, fmt.Errorf("exec: failed envref lookup, this should never happen")
+			}
+		case MakeEnv:
+			i := 0
+			for i < len(values) {
+				// if we get a stack value we need to add it to the env
+				if instruction.valueClasses[i] == Stack {
+					label := values[i+1].Value.(string)
+					env.bindings[label] = values[i]
+					i += 2
+				} else {
+					i++
+				}
+			}
+
+			returnValue = Value{
+				Car:   nil,
+				Cdr:   nil,
+				Type:  Nil,
+				Value: &[]Frame{env}[0], // copy env and get pointer
+			}
+		case Literal:
+			returnValue = values[0]
 		case Assign:
 			// load the value into the correct slot in the stack workspace
 			val := values[0]
@@ -456,7 +436,7 @@ executionLoop:
 			gensymCounter++
 		case Set:
 			toBind := values[0].Value.(string)
-			for currentFrame := env; currentFrame != nil; currentFrame = currentFrame.parent {
+			for currentFrame := &env; currentFrame != nil; currentFrame = currentFrame.parent {
 				_, inFrame := currentFrame.bindings[toBind]
 				if inFrame {
 					currentFrame.bindings[toBind] = values[1]
@@ -552,7 +532,7 @@ executionLoop:
 				Cdr:   &cell[1],
 				Type:  ConsCell,
 				Value: nil,
-			}, env)
+			}, &env)
 
 			if err != nil {
 				return nilValue, fmt.Errorf("exec macroexpand-1: %v", err)
@@ -560,7 +540,7 @@ executionLoop:
 
 			returnValue = result
 		case Bound:
-			_, lookupError := lookup(*env, values[0])
+			_, lookupError := lookup(env, values[0])
 			returnValue = Value{
 				Car:   nil,
 				Cdr:   nil,
