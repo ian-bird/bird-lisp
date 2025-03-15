@@ -21,7 +21,7 @@ func assemble(code []Value, env *Frame) (Value, error) {
 					valueClasses = append(valueClasses, Stack)
 					i += 2
 				// arg prefixes a load from an argument
-				case "arg":
+				case "arg#":
 					values = append(values, lineValues[i+1])
 					valueClasses = append(valueClasses, Arg)
 					i += 2
@@ -221,6 +221,13 @@ func assemble(code []Value, env *Frame) (Value, error) {
 					values, valueClasses := parseArgs(lineValues[1:])
 					instructions = append(instructions, Instruction{
 						class:        Literal,
+						values:       values,
+						valueClasses: valueClasses,
+					})
+				case "assemble":
+					values, valueClasses := parseArgs(lineValues[1:])
+					instructions = append(instructions, Instruction{
+						class:        Assemble,
 						values:       values,
 						valueClasses: valueClasses,
 					})

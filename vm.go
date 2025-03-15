@@ -533,6 +533,12 @@ executionLoop:
 			}
 		case VarArgFlag:
 			returnValue = nilValue
+		case Assemble:
+			var err error
+			returnValue, err = assemble(toArray(values[0]), &env)
+			if err != nil {
+				return nilValue, fmt.Errorf("exec assemble: %v", err)
+			}
 		default:
 			return nilValue, fmt.Errorf("exec: unknown instruction encountered")
 		}

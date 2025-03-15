@@ -104,12 +104,16 @@
 (define partial (lambda fn-and-args
 		  (lambda rest-of-args
 		    (apply (car fn-and-args) (append (cdr fn-and-args) rest-of-args)))))
+
 (define or (macro args (cons 'cond
 			     (append (map (lambda (arg) (list arg #t))
 					  args)
 				     '((else #f))))))
 
-(define and (macro args (list 'not (cons 'or (map (lambda (arg) (list 'not arg)) args)))))
+(define and (macro args (cons 'cond
+			      (append (map (lambda (arg) (list (list 'not arg) #f))
+					   args)
+				      '((else #t))))))
 
 (define (walk before after code)
     (cond ((before code) (before code))
@@ -251,6 +255,8 @@
 	(cons from (range (+ from step) to step))
 	'()))
 
+(define (list? x) (not (atom? x)))
+
 (define (macroexpand to-expand)
     (let ((expanded (macroexpand-1 to-expand)))
       (if  (and (eq? (type expanded) 'conscell)
@@ -260,11 +266,15 @@
 
 (define (macroexpand-all to-expand)
     (cond ((atom? to-expand) to-expand)
-	  ((and (not (atom? (car to-expand)))
-		(eq? (car (car to-expand)) 'macro)) (macroexpand to-expand))
-	  ((not (eq? (type (car to-expand)) 'symbol)) (map macroexpand-all to-expand))
-	  ((not (bound? (car to-expand))) (map macroexpand-all to-expand))
-	  ((eq? (type (eval (car to-expand))) 'macro) (map macroexpand-all (macroexpand to-expand)))
+	  ((and (list? (car to-expand))
+		(eq? (car (car to-expand)) 'macro))
+	   (macroexpand to-expand))
+	  ((not (eq? (type (car to-expand)) 'symbol))
+	   (map macroexpand-all to-expand))
+	  ((not (bound? (car to-expand)))
+	   (map macroexpand-all to-expand))
+	  ((eq? (type (eval (car to-expand))) 'macro)
+	   (map macroexpand-all (macroexpand to-expand)))
 	  (else (map macroexpand-all to-expand))))
 
 (define (caar x) (car (car x)))
@@ -274,8 +284,6 @@
 (define (cdar x) (cdr (car x)))
 
 (define (cddr x) (cdr (cdr x)))
-
-(define (list? x) (not (atom? x)))
 
 (define (halt f) f)
 
@@ -557,12 +565,40 @@
 	   (` lambda , (cadr expression) , (T (nth expression 2) 'halt)))
 	  (else expression)))
 
-
-
 (define (substitute from to body)
     (cond ((eq? body from) to)
 	  ((atom? body) body)
 	  (else (map (partial substitute from to) body))))
+
+(define (T-cond expression cont)
+    (foldr (lambda (pred-and-consq acc)
+		    (if (atom? (car pred-and-consq))
+			(` branch ,(car pred-and-consq) ,(T (cadr pred-and-consq) cont) , acc)
+			(T (car pred-and-consq) ;; (T pred (lambda (gs) (branch gs ,(T consq cont))))
+			   (` lambda (pred-sym #) ;; some issue here with atoms not inserting
+			     (branch pred-sym # ,(T (cadr pred-and-consq) cont) , acc)))))
+		  (if (eq? (car (last expression)) 'else)
+		      (T (cadr (last expression)) cont)
+		      (T '() cont))
+		  (cdr (if (eq? (car (last expression)) 'else)
+			   (drop-last expression)
+			   expression))))
+
+(define (T-func expression cont)
+    (let ((gensyms (map (lambda (_) (gensym)) expression))
+		 (gensyms-and-symbols (zip gensyms expression)))
+	     (foldr (lambda (gensym-and-symbol acc)
+		      (if (atom? (cadr gensym-and-symbol))
+			  acc
+			  (T (cadr gensym-and-symbol)
+			     (` lambda (, (car gensym-and-symbol)) , acc))))
+		    (` call-with-cont ,@ (map (lambda (gensym-and-symbol)
+						((if (atom? (cadr gensym-and-symbol))
+						     cadr
+						     car)
+						 gensym-and-symbol))
+					      gensyms-and-symbols) , cont)
+		    gensyms-and-symbols)))
 
 (define (T expression cont)
     (cond ((atom? expression)
@@ -580,18 +616,7 @@
 		  (` lambda (arg #) (call-with-cont label , (cadr expression) arg # , cont)))))
 
 	  ((eq? 'cond (car expression)) ; match (cond ,@ _)
-	   (foldr (lambda (pred-and-consq acc)
-		    (if (atom? (car pred-and-consq))
-			(` branch ,(car pred-and-consq) ,(T (cadr pred-and-consq) cont) , acc)
-			(T (car pred-and-consq) ;; (T pred (lambda (gs) (branch gs ,(T consq cont))))
-			   (` lambda (pred-sym #) ;; some issue here with atoms not inserting
-			     (branch pred-sym # ,(T (cadr pred-and-consq) cont) , acc)))))
-		  (if (eq? (car (last expression)) 'else)
-		      (T (cadr (last expression)) cont)
-		      (T '() cont))
-		  (cdr (if (eq? (car (last expression)) 'else)
-			   (drop-last expression)
-			   expression))))
+	   (T-cond expression cont))
 
 	  ((and (eq? (count expression) 2) ; match (quote , _)
 		(eq? 'quote (car expression)))
@@ -601,70 +626,52 @@
 	   (` call-with-cont gensym , cont))
 
 	  ((>= (count expression) 1) ; match (_ ,@ _)
-	   (let ((gensyms (map (lambda (_) (gensym)) expression))
-		 (gensyms-and-symbols (zip gensyms expression)))
-	     (foldr (lambda (gensym-and-symbol acc)
-		      (if (atom? (cadr gensym-and-symbol))
-			  acc
-			  (T (cadr gensym-and-symbol)
-			     (` lambda (, (car gensym-and-symbol)) , acc))))
-		    (` call-with-cont ,@ (map (lambda (gensym-and-symbol)
-						((if (atom? (cadr gensym-and-symbol))
-						     cadr
-						     car)
-						 gensym-and-symbol))
-					      gensyms-and-symbols) , cont)
-		    gensyms-and-symbols)))
+	   (T-func expression cont))
 	  (else '())))
 
-(define (inline-atoms cps-form)
-    (match cps-form
-	   (((lambda (, param) , body) , arg)
-	    (if (atom? arg)
-		(inline-atoms (substitute param arg body))
-		(map inline-atoms cps-form)))
-	   ((,@ elements)
-	    (map inline-atoms cps-form))
-	   (else cps-form)))
-
-(define (unfold cps-form)
-    (cond ((atom? cps-form) (list cps-form))
-	  ((and (list? (car cps-form)) ; match ((lambda , _ , _) , _)
-		(eq? (caar cps-form) 'lambda)
-		(eq? (count cps-form) 2)
-		(eq? (count (car cps-form)) 3))
-	   (` ,(unfold (cadr cps-form))
+(define (unfold-lambda-call cps-form)
+    (` ,(unfold (cadr cps-form))
 	       ,@(map (lambda (param) (` assign , param))
 		      (cadr (car cps-form)))
 	       ,@(unfold (nth (car cps-form) 2))))
-	  
-	  ((and (eq? (car cps-form) 'call-with-cont) ; match (call-with-cont ,@ _ , _)
-		(>= (count cps-form) 2))
-	   (` ,(cdr (drop-last cps-form)) ,@(unfold (last cps-form))))
-	  
-	  ((and (eq? (car cps-form) 'lambda) ; match (lambda , _ , _)
-		(eq? (count cps-form) 3))
-	   (` ,@(map (lambda (param) (` assign , param))
-		      (cadr cps-form))
-		 ,@(unfold (nth cps-form 2))))
-	  
-	  ((and (eq? (car cps-form) 'branch) ; match (branch , _ , _ , _)
-		(eq? (count cps-form) 4))
-	   (` (branch , (cadr cps-form) consq-label #)
-	       ,@(unfold (nth cps-form 3))
-	       (-> consq-label #)
-	       ,@(unfold (nth cps-form 2))))
-	  
-	  ((and (eq? (car cps-form) 'halt) ; match (halt , _)
-		(eq? (count cps-form) 2))
-	   (let ((arg (cadr cps-form)))
-	     (` ,(if (atom? arg) arg (unfold arg))
-		 halt)))
-	  
-	  ((and (eq? (car cps-form) 'quote) ; match (quote , _)
-		(eq? (count cps-form) 2))
-	   cps-form)
-      (else (list cps-form))))
+
+(define (unfold cps-form)
+    (let ((lambda-call? (and (list? cps-form)
+			     (list? (car cps-form))
+			     (eq? (caar cps-form) 'lambda)
+			     (eq? (count cps-form) 2)
+			     (eq? (count (car cps-form)) 3))))
+      (cond ((atom? cps-form) (list cps-form))
+	    (lambda-call?
+	     (unfold-lambda-call cps-form))
+	    
+	    ((and (eq? (car cps-form) 'call-with-cont) ; match (call-with-cont ,@ _ , _)
+		  (>= (count cps-form) 2))
+	     (` ,(cdr (drop-last cps-form)) ,@(unfold (last cps-form))))
+	    
+	    ((and (eq? (car cps-form) 'lambda) ; match (lambda , _ , _)
+		  (eq? (count cps-form) 3))
+	     (` ,@(map (lambda (param) (` assign , param))
+		       (cadr cps-form))
+		  ,@(unfold (nth cps-form 2))))
+	    
+	    ((and (eq? (car cps-form) 'branch) ; match (branch , _ , _ , _)
+		  (eq? (count cps-form) 4))
+	     (` (branch , (cadr cps-form) consq-label #)
+		,@(unfold (nth cps-form 3))
+		(-> consq-label #)
+		,@(unfold (nth cps-form 2))))
+	    
+	    ((and (eq? (car cps-form) 'halt) ; match (halt , _)
+		  (eq? (count cps-form) 2))
+	     (let ((arg (cadr cps-form)))
+	       (` ,(if (atom? arg) arg (unfold arg))
+		   halt)))
+	    
+	    ((and (eq? (car cps-form) 'quote) ; match (quote , _)
+		  (eq? (count cps-form) 2))
+	     cps-form)
+	    (else (list cps-form)))))
 
 (define (fix-assignments instructions)
     (let ((stack-value 0)
@@ -684,7 +691,7 @@
 					   (update gensym-alist
 						   (cadr instruction)
 						   (constantly (dec stack-value))))
-				     (` assign arg ,(dec stack-value) ,(dec stack-value)))
+				     (` assign arg# ,(dec stack-value) ,(dec stack-value)))
 				   (progn
 				     (set! 'stack-value (inc stack-value))
 				     (set! 'gensym-alist
@@ -785,14 +792,6 @@
 	   '()
 	   instructions))
 
-(define (mark-var-args expression assembly)
-    (if (and (list? expression)
-	     (eq? (car expression) 'lambda)
-	     (atom? (cadr expression)))
-	(cons '(var-arg) (map (lambda (e) (mark-var-args e assembly)))assembly)
-	))
-
-
 (define (get-immediate-lambdas expression)
     (if (list? expression)
 	(if (eq? (car expression) 'lambda)
@@ -834,10 +833,10 @@
 
 (define (optimize instructions)
     (map (lambda (instruction)
-	 (match instruction
-		((code ,@ lines)
-		 (` code ,@(optimize lines)))
-		(else instruction)))
+	   (cond ((atom? instruction) instruction)
+		 ((eq? (car instruction) 'code)
+		  (` code ,@(optimize (cdr instruction))))
+		 (else instruction)))
        (add-tailcalls
 	(add-gosubs
 	 (fix-branches

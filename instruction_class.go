@@ -30,4 +30,5 @@ const (
 	MakeEnv
 	EnvRef
 	VarArgFlag
+	Assemble
 )
