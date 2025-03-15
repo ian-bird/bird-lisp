@@ -684,22 +684,35 @@ func Eval(toEvaluate Value, frame *Frame) (Value, error) {
 				return result, nil
 			case CompiledFunction:
 				instructions := firstThing.Cdr.Value.([]Instruction)
-				workspace := make([]Value, len(instructions) / 2 + 1)
-				for i, arg := range arguments {
-					var evaluatedArg Value 
-					evaluatedArg, err = Eval(arg, frame)
-					if err != nil {
-						return nilValue, passUpError(err)
+				workspace := make([]Value, len(instructions)/2+1)
+				if instructions[0].class == VarArgFlag {
+					var evaluatedArgs []Value
+					for _, arg := range arguments {
+						var evaluatedArg Value
+						evaluatedArg, err = Eval(arg, frame)
+						if err != nil {
+							return nilValue, passUpError(err)
+						}
+						evaluatedArgs = append(evaluatedArgs, evaluatedArg)
 					}
-					workspace[i] = evaluatedArg
+					workspace[0] = toList(evaluatedArgs)
+				} else {
+					for i, arg := range arguments {
+						var evaluatedArg Value
+						evaluatedArg, err = Eval(arg, frame)
+						if err != nil {
+							return nilValue, passUpError(err)
+						}
+						workspace[i] = evaluatedArg
+					}
 				}
-							
+
 				newStackFrame := StackFrame{
-					workspace: workspace,
+					workspace:           workspace,
 					callerIsInterpreted: true,
-					returnLine:  0,
-					callerCode: []Instruction {},
-					callerEnv: Frame{},
+					returnLine:          0,
+					callerCode:          []Instruction{},
+					callerEnv:           Frame{},
 				}
 				stack = append(stack, newStackFrame)
 				result, err := exec(firstThing)

@@ -8,15 +8,15 @@ import (
 // print out each element in the lis
 // with special logic for cons pairs
 func printList(v Value) string {
-	result := Print(*v.Car)
+	result := printValue(*v.Car)
 	for v = *v.Cdr; v.Type == ConsCell; v = *v.Cdr {
 		result += " "
-		result += Print(*v.Car)
+		result += printValue(*v.Car)
 	}
 	if v.Type == Nil {
 		return result
 	} else {
-		return result + ". " + Print(v)
+		return result + ". " + printValue(v)
 	}
 }
 
@@ -32,12 +32,16 @@ func stringify(s string) string {
 
 // converts a value to a string recursively,
 // representing lists by wrapping them with parenthesis
-func Print(v Value) string {
+func printValue(v Value) string {
 	switch v.Type {
 	case Nil:
 		return "()"
 	case Boolean:
-		return fmt.Sprintf("%v", v.Value.(bool))
+		if v.Value.(bool) {
+			return "#t"
+		} else {
+			return "#f"
+		}
 	case Number:
 		return fmt.Sprintf("%v", v.Value.(float64))
 	case String:
@@ -49,4 +53,14 @@ func Print(v Value) string {
 	default:
 		return "Cannot print fn/macro/special-form"
 	}
+}
+
+func Print(v Value) string {
+	unbrokenStr := printValue(v)
+	var outputStr string
+	for len(unbrokenStr) > 10000 {
+		outputStr += unbrokenStr[:10000] + "\n"
+		unbrokenStr = unbrokenStr[10000:]
+	}
+	return outputStr + unbrokenStr
 }

@@ -11,10 +11,8 @@ func exec(compiledFunction Value) (Value, error) {
 
 	newEnv := func(compiledFunction Value) Frame {
 		return Frame{
-			parent: compiledFunction.Value.(*Frame),
-			// this cost has to be eaten up front since the first label could be
-			// after a make-env, and we need the
-			bindings: make(map[string]Value),
+			parent:   compiledFunction.Value.(*Frame),
+			bindings: nil,
 		}
 	}
 
@@ -92,6 +90,21 @@ executionLoop:
 			// this call will use the stack if its a compiled function
 			// first we need to figure out what's going to be ran, though.
 			function := values[0]
+			args := values[1:]
+
+			var evaledArgs []Value
+			for i, arg := range args {
+				if arg.Type == Symbol && instruction.valueClasses[i+1] == Const {
+					evaledArg, err := lookup(env, arg)
+					if err != nil || evaledArg.Type != SpecialForm {
+						evaledArgs = append(evaledArgs, arg)
+					} else {
+						evaledArgs = append(evaledArgs, evaledArg)
+					}
+				} else {
+					evaledArgs = append(evaledArgs, arg)
+				}
+			}
 			switch function.Type {
 			case InterpretedFunction, CompiledFunction, SpecialForm:
 				// do nothing
@@ -112,7 +125,11 @@ executionLoop:
 				newFrame := StackFrame{
 					workspace: func() []Value {
 						result := make([]Value, len(function.Cdr.Value.([]Instruction))/2+1)
-						copy(result, values[1:])
+						if function.Cdr.Value.([]Instruction)[0].class == VarArgFlag {
+							result[0] = toList(evaledArgs)
+						} else {
+							copy(result, evaledArgs)
+						}
 						return result
 					}(),
 					callerIsInterpreted: false,
@@ -126,10 +143,8 @@ executionLoop:
 				env = newEnv(function)
 
 			case InterpretedFunction:
-				args := values[1:]
-
 				var err error
-				returnValue, err = apply(function, args)
+				returnValue, err = apply(function, evaledArgs)
 				if err != nil {
 					return nilValue, fmt.Errorf("exec: %v", err)
 				}
@@ -157,6 +172,20 @@ executionLoop:
 			// this call will not extend the stack if its a compiled function
 			// first we need to figure out what's going to be ran, though.
 			function := values[0]
+			args := values[1:]
+			var evaledArgs []Value
+			for i, arg := range args {
+				if arg.Type == Symbol {
+					evaledArg, err := lookup(env, arg)
+					if err != nil || evaledArg.Type != SpecialForm || instruction.valueClasses[i+1] != Const {
+						evaledArgs = append(evaledArgs, arg)
+					} else {
+						evaledArgs = append(evaledArgs, evaledArg)
+					}
+				} else {
+					evaledArgs = append(evaledArgs, arg)
+				}
+			}
 			switch function.Type {
 			case InterpretedFunction, CompiledFunction, SpecialForm:
 				// do nothing
@@ -178,16 +207,18 @@ executionLoop:
 				// compiled function can be ran without consuming stack.
 				// return data remains unchanged, but blow away stack variables
 				stackWorkspace := make([]Value, len(instructions)/2+1)
-				copy(stackWorkspace, values[1:])
+				if instructions[0].class == VarArgFlag {
+					stackWorkspace[0] = toList(evaledArgs)
+				} else {
+					copy(stackWorkspace, evaledArgs)
+				}
 				stack[len(stack)-1].workspace = stackWorkspace
 
 				env = newEnv(function)
 			case InterpretedFunction:
 				// can't avoid cost of making a call to an interpreted function
-				args := values[1:]
-
 				var err error
-				returnValue, err = apply(function, args)
+				returnValue, err = apply(function, evaledArgs)
 				if err != nil {
 					return nilValue, fmt.Errorf("exec: %v", err)
 				}
@@ -220,6 +251,10 @@ executionLoop:
 				// -1 because its added at the end of processing
 			}
 		case Label:
+			// if bindings are nilled out fix that now that we need it
+			if env.bindings == nil {
+				env.bindings = make(map[string]Value)
+			}
 			env.bindings[values[0].Value.(string)] = values[1]
 
 			returnValue = nilValue
@@ -239,6 +274,11 @@ executionLoop:
 				return nilValue, fmt.Errorf("exec: failed envref lookup, this should never happen")
 			}
 		case MakeEnv:
+			// if bindings are nilled out fix that now that we need it
+			if env.bindings == nil {
+				env.bindings = make(map[string]Value)
+			}
+
 			i := 0
 			for i < len(values) {
 				// if we get a stack value we need to add it to the env
@@ -491,6 +531,8 @@ executionLoop:
 				Type:  Boolean,
 				Value: lookupError == nil,
 			}
+		case VarArgFlag:
+			returnValue = nilValue
 		default:
 			return nilValue, fmt.Errorf("exec: unknown instruction encountered")
 		}

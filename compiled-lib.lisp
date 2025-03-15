@@ -1,247 +1,147 @@
-(def-comp (inc a) (+ a 1))
+(define list (assemble '((var-arg) (assign arg 0 0) ($ 0) halt)))
 
-(def-comp (dec a) (- a 1))
+(define count (assemble '((assign arg 0 0) (code (assign arg 0 0) (assign arg 1 1) (quote ()) (assign prev 2) (eq? $ 0 $ 2) (assign prev 3) (branch $ 3 15) (env-ref count-tco) (assign prev 4) (cdr $ 0) (assign prev 5) (+ $ 1 1) (assign prev 6) (tailcall $ 4 $ 5 $ 6) halt ($ 1) halt) (assign prev 1) (make-env count-tco) (assign prev 2) (make-closure $ 1 $ 2) (assign prev 3) (label count-tco $ 3) (assign prev 4) (gosub count-tco $ 0 0) (assign prev 5) (tailcall progn $ 4 $ 5) halt)))
 
-(def-comp (count coll)
-    (progn
-      (define (count-tco x acc)
-	  (if (nil? x)
-	      acc
-	      (count-tco (cdr x) (inc acc))))
-      (count-tco coll 0)))
+(define foldl (assemble '((assign arg 0 0) (assign arg 1 1) (assign arg 2 2) (quote ()) (assign prev 3) (eq? $ 2 $ 3) (assign prev 4) (branch $ 4 16) (car $ 2) (assign prev 5) (gosub $ 0 $ 1 $ 5) (assign prev 6) (cdr $ 2) (assign prev 7) (tailcall foldl $ 0 $ 6 $ 7) halt ($ 1) halt)))
 
+(define flip (assemble '((assign arg 0 0) (code (assign arg 0 0) (assign arg 1 1) (env-ref f) (assign prev 2) (tailcall $ 2 $ 1 $ 0) halt) (assign prev 1) (make-env $ 0 f) (assign prev 2) (make-closure $ 1 $ 2) halt)))
 
+(define reverse (assemble '((assign arg 0 0) (code (assign arg 0 0) (assign arg 1 1) (cons $ 1 $ 0) halt) (assign prev 1) (quote ()) (assign prev 2) (tailcall foldl $ 1 $ 2 $ 0) halt)))
 
-(def-comp (reverse coll)
-    (progn
-      (define (reverse-tco coll acc)
-	  (if (nil? coll)
-	      acc
-	      (reverse-tco (cdr coll)
-			   (cons (car coll) acc))))
-      (reverse-tco coll '())))
+(define append2 (assemble '((assign arg 0 0) (assign arg 1 1) (gosub flip cons) (assign prev 2) (gosub reverse $ 0) (assign prev 3) (tailcall foldl $ 2 $ 1 $ 3) halt)))
 
-(def-comp (append2 a b)
-  (progn
-    (define (append2-inner a b)
-	(if (nil? a)
-	    b
-	    (append2-inner (cdr a)
-			   (cons (car a) b))))
-    (append2-inner (reverse a) b)))
+(define foldr (assemble '((assign arg 0 0) (assign arg 1 1) (assign arg 2 2) (gosub flip $ 0) (assign prev 3) (gosub reverse $ 2) (assign prev 4) (tailcall foldl $ 3 $ 1 $ 4) halt)))
 
+(define map (assemble '((assign arg 0 0) (assign arg 1 1) (code (assign arg 0 0) (assign arg 1 1) (env-ref fn) (assign prev 2) (gosub $ 2 $ 1) (assign prev 3) (cons $ 3 $ 0) halt) (assign prev 2) (make-env $ 0 fn) (assign prev 3) (make-closure $ 2 $ 3) (assign prev 4) (quote ()) (assign prev 5) (gosub foldl $ 4 $ 5 $ 1) (assign prev 6) (tailcall reverse $ 6) halt)))
 
+(define filter (assemble '((assign arg 0 0) (assign arg 1 1) (code (assign arg 0 0) (assign arg 1 1) (env-ref fn) (assign prev 2) (gosub $ 2 $ 0) (assign prev 3) (branch $ 3 9) ($ 1) halt (cons $ 0 $ 1) halt) (assign prev 2) (make-env $ 0 fn) (assign prev 3) (make-closure $ 2 $ 3) (assign prev 4) (quote ()) (assign prev 5) (tailcall foldr $ 4 $ 5 $ 1) halt)))
 
-(def-comp (foldl fn basis coll)
-    (if (nil? coll)
-	basis
-	(foldl fn (fn basis (car coll)) (cdr coll))))
+(define even? (assemble '((assign arg 0 0) (% $ 0 2) (assign prev 1) (eq? 0 $ 1) halt)))
 
-(def-comp (flip f) (lambda (a b) (f b a)))
+(define last (assemble '((assign arg 0 0) (cdr $ 0) (assign prev 1) (quote ()) (assign prev 2) (eq? $ 1 $ 2) (assign prev 3) (branch $ 3 12) (cdr $ 0) (assign prev 4) (tailcall last $ 4) halt (car $ 0) halt)))
 
-(def-comp (foldr fn basis coll)
-  (foldl (flip fn) basis (reverse coll)))
+(define progn (assemble '((var-arg) (assign arg 0 0) (tailcall last $ 0) halt)))
 
-(def-comp (map fn coll)
-    (reverse (foldl (lambda (acc e)
-		      (cons (fn e) acc))
-		    '()
-		    coll)))
+(define append (assemble '((var-arg) (assign arg 0 0) (quote ()) (assign prev 1) (tailcall foldr append2 $ 1 $ 0) halt)))
 
-(def-comp (filter fn coll)
-    (foldr (lambda (e acc) (if (fn e) (cons e acc) acc)) '() coll))
+(define identity (assemble '((assign arg 0 0) ($ 0) halt)))
 
-(def-comp (last coll)
-    (if (nil? (cdr coll))
-	(car coll)
-	(last (cdr coll))))
+(define not (assemble '((assign arg 0 0) (branch $ 0 4) #t halt #f halt)))
 
-(def-comp (identity x) x)
+(define partial (assemble '((var-arg) (assign arg 0 0) (code (var-arg) (assign arg 0 0) (env-ref fn-and-args) (assign prev 1) (car $ 1) (assign prev 2) (env-ref fn-and-args) (assign prev 3) (cdr $ 3) (assign prev 4) (gosub append $ 4 $ 0) (assign prev 5) (tailcall apply $ 2 $ 5) halt) (assign prev 1) (make-env $ 0 fn-and-args) (assign prev 2) (make-closure $ 1 $ 2) halt)))
 
-(def-comp (not x) (if x #f #t))
+(define walk (assemble '((assign arg 0 0) (assign arg 1 1) (assign arg 2 2) (gosub $ 0 $ 2) (assign prev 3) (branch $ 3 12) (gosub partial walk $ 0 $ 1) (assign prev 4) (gosub map $ 4 $ 2) (assign prev 5) (tailcall $ 1 $ 5) halt (tailcall $ 0 $ 2) halt)))
 
-(def-comp (walk before after code)
-    (cond ((before code) (before code))
-	  (else (after (map (partial walk before after) code)))))
+(define any? (assemble '((assign arg 0 0) (assign arg 1 1) (gosub map $ 0 $ 1) (assign prev 2) (tailcall apply or $ 2) halt)))
 
-(def-comp (any? f coll)
-    (foldl (lambda (acc e) (or acc e)) #f (map f coll)))
+(define zip (assemble '((var-arg) (assign arg 0 0) (code (assign arg 0 0) (quote ()) (assign prev 1) (eq? $ 0 $ 1) halt) (assign prev 1) (gosub any? $ 1 $ 0) (assign prev 2) (branch $ 2 15) (gosub map car $ 0) (assign prev 3) (gosub map cdr $ 0) (assign prev 4) (gosub apply zip $ 4) (assign prev 5) (cons $ 3 $ 5) halt (quote ()) halt)))
 
-(def-comp (all? f coll)
-    (foldl (lambda (acc e) (and acc e)) #t (map f coll)))
+(define all? (assemble '((assign arg 0 0) (assign arg 1 1) (gosub map $ 0 $ 1) (assign prev 2) (tailcall apply and $ 2) halt)))
 
-(def-comp (take-last n coll)
-    (if (nil? coll)
-	'()
-	(if (>= n (count coll))
-	    coll
-	    (take-last n (cdr coll)))))
+(define >= (assemble '((var-arg) (assign arg 0 0) (code (assign arg 0 0) (> $ 0 0) (assign prev 1) (branch $ 1 11) (eq? $ 0 0) (assign prev 2) (branch $ 2 9) #f halt #t halt #t halt) (assign prev 1) (gosub partial apply -) (assign prev 2) (cdr $ 0) (assign prev 3) (gosub zip $ 0 $ 3) (assign prev 4) (gosub map $ 2 $ 4) (assign prev 5) (tailcall all? $ 1 $ 5) halt)))
 
-(def-comp (take n coll)
-    (if (and (> n 0) (not (nil? coll)))
-	(cons (car coll) (take (dec n) (cdr coll)))
-	'()))
+(define <= (assemble '((var-arg) (assign arg 0 0) (code (assign arg 0 0) (> 0 $ 0) (assign prev 1) (branch $ 1 11) (eq? $ 0 0) (assign prev 2) (branch $ 2 9) #f halt #t halt #t halt) (assign prev 1) (gosub partial apply -) (assign prev 2) (cdr $ 0) (assign prev 3) (gosub zip $ 0 $ 3) (assign prev 4) (gosub map $ 2 $ 4) (assign prev 5) (tailcall all? $ 1 $ 5) halt)))
 
-(def-comp (drop n coll)
-    (if (and (> n 0) (not (nil? coll)))
-	(drop (dec n) (cdr coll))
-	coll))
+(define take-last (assemble '((assign arg 0 0) (assign arg 1 1) (quote ()) (assign prev 2) (eq? $ 1 $ 2) (assign prev 3) (branch $ 3 18) (gosub count $ 1) (assign prev 4) (gosub >= $ 0 $ 4) (assign prev 5) (branch $ 5 16) (cdr $ 1) (assign prev 6) (tailcall take-last $ 0 $ 6) halt ($ 1) halt (quote ()) halt)))
 
-(def-comp (partition size step coll)
-    (if (>= (count coll) size)
-	(cons (take size coll)
-	      (partition size step (drop step coll)))
-	'()))
+(define inc (assemble '((assign arg 0 0) (+ $ 0 1) halt)))
 
-(def-comp (mapcat f coll)
-    (apply append (map f coll)))
+(define dec (assemble '((assign arg 0 0) (- $ 0 1) halt)))
 
-(def-comp (replace-subseq-2 operation coll)
-  (if (> 2 (count coll))
-      coll
-      (cons
-       (if (operation (car coll) (car (cdr coll)))
-	   (operation (car coll) (car (cdr coll)))
-	   (car coll))
-       (if (operation (car coll) (car (cdr coll)))
-	   (replace-subseq-2 operation (cdr (cdr coll)))
-	   (replace-subseq-2 operation (cdr coll))))))
+(define take (assemble '((assign arg 0 0) (assign arg 1 1) (> $ 0 0) (assign prev 2) (gosub not $ 2) (assign prev 3) (branch $ 3 46) (quote ()) (assign prev 4) (eq? $ 1 $ 4) (assign prev 5) (gosub not $ 5) (assign prev 6) (gosub not $ 6) (assign prev 7) (branch $ 7 31) (gosub not #f) (assign prev 8) (branch $ 8 21) (quote ()) halt (car $ 1) (assign prev 9) (gosub dec $ 0) (assign prev 10) (cdr $ 1) (assign prev 11) (gosub take $ 10 $ 11) (assign prev 12) (cons $ 9 $ 12) halt (gosub not #t) (assign prev 13) (branch $ 13 36) (quote ()) halt (car $ 1) (assign prev 14) (gosub dec $ 0) (assign prev 15) (cdr $ 1) (assign prev 16) (gosub take $ 15 $ 16) (assign prev 17) (cons $ 14 $ 17) halt (gosub not #t) (assign prev 18) (branch $ 18 51) (quote ()) halt (car $ 1) (assign prev 19) (gosub dec $ 0) (assign prev 20) (cdr $ 1) (assign prev 21) (gosub take $ 20 $ 21) (assign prev 22) (cons $ 19 $ 22) halt)))
 
-(def-comp (subseq-post-walk-2 operation coll)
-    (if (atom? coll)
-	coll
-	(replace-subseq-2
-	 operation
-	 (map (partial subseq-post-walk-2 operation)
-	      coll))))
+(define drop (assemble '((assign arg 0 0) (assign arg 1 1) (> $ 0 0) (assign prev 2) (gosub not $ 2) (assign prev 3) (branch $ 3 38) (quote ()) (assign prev 4) (eq? $ 1 $ 4) (assign prev 5) (gosub not $ 5) (assign prev 6) (gosub not $ 6) (assign prev 7) (branch $ 7 27) (gosub not #f) (assign prev 8) (branch $ 8 21) ($ 1) halt (gosub dec $ 0) (assign prev 9) (cdr $ 1) (assign prev 10) (tailcall drop $ 9 $ 10) halt (gosub not #t) (assign prev 11) (branch $ 11 32) ($ 1) halt (gosub dec $ 0) (assign prev 12) (cdr $ 1) (assign prev 13) (tailcall drop $ 12 $ 13) halt (gosub not #t) (assign prev 14) (branch $ 14 43) ($ 1) halt (gosub dec $ 0) (assign prev 15) (cdr $ 1) (assign prev 16) (tailcall drop $ 15 $ 16) halt)))
 
-(def-comp (alist coll)
-    (if (even? (count coll))
-	(map (partial apply cons) (partition 2 2 coll))
-	'()))
+(define partition (assemble '((assign arg 0 0) (assign arg 1 1) (assign arg 2 2) (gosub count $ 2) (assign prev 3) (gosub >= $ 3 $ 0) (assign prev 4) (branch $ 4 10) (quote ()) halt (gosub take $ 0 $ 2) (assign prev 5) (gosub drop $ 1 $ 2) (assign prev 6) (gosub partition $ 0 $ 1 $ 6) (assign prev 7) (cons $ 5 $ 7) halt)))
 
-(def-comp (get m k)
-    (cond ((nil? m) '())
-	  ((eq? (car (car m)) k) (cdr (car m)))
-	  (else (get (cdr m) k))))
+(define mapcat (assemble '((assign arg 0 0) (assign arg 1 1) (gosub map $ 0 $ 1) (assign prev 2) (tailcall apply append $ 2) halt)))
 
-(def-comp (nth coll index)
-    (car (drop index coll)))
+;; too long
+(define replace-subseq-2 (assemble '((assign arg 0 0) (assign arg 1 1) (gosub count $ 1) (assign prev 2) (> 2 $ 2) (assign prev 3) (branch $ 3 72) (car $ 1) (assign prev 4) (cdr $ 1) (assign prev 5) (car $ 5) (assign prev 6) (gosub $ 0 $ 4 $ 6) (assign prev 7) (branch $ 7 41) (car $ 1) (assign prev 8) (car $ 1) (assign prev 9) (cdr $ 1) (assign prev 10) (car $ 10) (assign prev 11) (gosub $ 0 $ 9 $ 11) (assign prev 12) (branch $ 12 33) (cdr $ 1) (assign prev 13) (gosub replace-subseq-2 $ 0 $ 13) (assign prev 14) (cons $ 8 $ 14) halt (cdr $ 1) (assign prev 15) (cdr $ 15) (assign prev 16) (gosub replace-subseq-2 $ 0 $ 16) (assign prev 17) (cons $ 8 $ 17) halt (car $ 1) (assign prev 18) (cdr $ 1) (assign prev 19) (car $ 19) (assign prev 20) (gosub $ 0 $ 18 $ 20) (assign prev 21) (car $ 1) (assign prev 22) (cdr $ 1) (assign prev 23) (car $ 23) (assign prev 24) (gosub $ 0 $ 22 $ 24) (assign prev 25) (branch $ 25 64) (cdr $ 1) (assign prev 26) (gosub replace-subseq-2 $ 0 $ 26) (assign prev 27) (cons $ 21 $ 27) halt (cdr $ 1) (assign prev 28) (cdr $ 28) (assign prev 29) (gosub replace-subseq-2 $ 0 $ 29) (assign prev 30) (cons $ 21 $ 30) halt ($ 1) halt)))
 
-(def-comp (update m k f)
-    (cons (cons k (f (get m k)))
-	  m))
+(define subseq-post-walk-2 (assemble '((assign arg 0 0) (assign arg 1 1) (atom? $ 1) (assign prev 2) (branch $ 2 11) (gosub partial subseq-post-walk-2 $ 0) (assign prev 3) (gosub map $ 3 $ 1) (assign prev 4) (tailcall replace-subseq-2 $ 0 $ 4) halt ($ 1) halt)))
 
-(def-comp (constantly x) (lambda (_) x))
+(define alist (assemble '((assign arg 0 0) (gosub count $ 0) (assign prev 1) (gosub even? $ 1) (assign prev 2) (branch $ 2 8) (quote ()) halt (gosub partial apply cons) (assign prev 3) (gosub partition 2 2 $ 0) (assign prev 4) (tailcall map $ 3 $ 4) halt)))
 
-(def-comp (unassoc m k)
-    (filter (lambda (pair) (not (eq? (car pair) k)))
-	    m))
+(define get (assemble '((assign arg 0 0) (assign arg 1 1) (quote ()) (assign prev 2) (eq? $ 0 $ 2) (assign prev 3) (branch $ 3 22) (car $ 0) (assign prev 4) (car $ 4) (assign prev 5) (eq? $ 5 $ 1) (assign prev 6) (branch $ 6 18) (cdr $ 0) (assign prev 7) (tailcall get $ 7 $ 1) halt (car $ 0) (assign prev 8) (cdr $ 8) halt (quote ()) halt)))
 
-(def-comp (range from to step)
-    (if (< from to)
-	(cons from (range (+ from step) to step))
-	'()))
+(define nth (assemble '((assign arg 0 0) (assign arg 1 1) (gosub drop $ 1 $ 0) (assign prev 2) (car $ 2) halt)))
 
-(def-comp (caar x) (car (car x)))
+(define update (assemble '((assign arg 0 0) (assign arg 1 1) (assign arg 2 2) (gosub get $ 0 $ 1) (assign prev 3) (gosub $ 2 $ 3) (assign prev 4) (cons $ 1 $ 4) (assign prev 5) (cons $ 5 $ 0) halt)))
 
-(def-comp (cadr x) (car (cdr x)))
+(define constantly (assemble '((assign arg 0 0) (code (assign arg 0 0) (env-ref x) halt) (assign prev 1) (make-env $ 0 x) (assign prev 2) (make-closure $ 1 $ 2) halt)))
 
-(def-comp (cdar x) (cdr (car x)))
+(define unassoc (assemble '((assign arg 0 0) (assign arg 1 1) (code (assign arg 0 0) (car $ 0) (assign prev 1) (env-ref k) (assign prev 2) (eq? $ 1 $ 2) (assign prev 3) (tailcall not $ 3) halt) (assign prev 2) (make-env $ 1 k) (assign prev 3) (make-closure $ 2 $ 3) (assign prev 4) (tailcall filter $ 4 $ 0) halt)))
 
-(def-comp (cddr x) (cdr (cdr x)))
+(define range (assemble '((assign arg 0 0) (assign arg 1 1) (assign arg 2 2) (> $ 1 $ 0) (assign prev 3) (branch $ 3 8) (quote ()) halt (+ $ 0 $ 2) (assign prev 4) (gosub range $ 4 $ 1 $ 2) (assign prev 5) (cons $ 0 $ 5) halt)))
 
-(def-comp (list? x) (not (atom? x)))
+(define caar (assemble '((assign arg 0 0) (car $ 0) (assign prev 1) (car $ 1) halt)))
 
-(def-comp (halt f) f)
+(define cadr (assemble '((assign arg 0 0) (cdr $ 0) (assign prev 1) (car $ 1) halt)))
 
-(def-comp (drop-last coll)
-    (take (dec (count coll)) coll))
+(define cdar (assemble '((assign arg 0 0) (car $ 0) (assign prev 1) (cdr $ 1) halt)))
 
-(def-comp (match-head template arg)
-    (cond ((nil? template) arg)
-	  ((nil? arg) #f)
-	  ;; if a list is encountered loop back to top level matching
-	  ((list? (car template)) (if (list? (car arg))
-				      (match? (car template) (car arg))
-				      #f))
-	  ((eq? (car template) ',) (match-head (cddr template) (cdr arg)))
-	  ((eq? (car template) (car arg)) (match-head (cdr template) (cdr arg)))
-	  (else #f)))
+(define cddr (assemble '((assign arg 0 0) (cdr $ 0) (assign prev 1) (cdr $ 1) halt)))
 
+(define list? (assemble '((assign arg 0 0) (atom? $ 0) (assign prev 1) (tailcall not $ 1) halt)))
 
-(def-comp (match-tail template arg)
-  (let ((reversed (reverse arg))
-	(reversed-template
-	 (let ((unquote (gensym)))
-	   (foldl (lambda (acc e)
-		    (cond ((and (not (nil? acc))
-				(eq? (car acc) unquote))
-			   (cons ', (cons e (cdr acc))))
-			  ((eq? e ',) (cons unquote acc))
-			  (else (cons e acc))))
-		  '()
-		  template))))
-    (match-head reversed-template reversed)))
+(define halt (assemble '((assign arg 0 0) ($ 0) halt)))
+
+(define drop-last (assemble '((assign arg 0 0) (gosub count $ 0) (assign prev 1) (gosub dec $ 1) (assign prev 2) (tailcall take $ 2 $ 0) halt)))
+
+(define match-head (assemble '((assign arg 0 0) (assign arg 1 1) (quote ()) (assign prev 2) (eq? $ 0 $ 2) (assign prev 3) (branch $ 3 60) (quote ()) (assign prev 4) (eq? $ 1 $ 4) (assign prev 5) (branch $ 5 58) (car $ 0) (assign prev 6) (gosub list? $ 6) (assign prev 7) (branch $ 7 45) (car $ 0) (assign prev 8) (quote ,) (assign prev 9) (eq? $ 8 $ 9) (assign prev 10) (branch $ 10 39) (car $ 0) (assign prev 11) (car $ 1) (assign prev 12) (eq? $ 11 $ 12) (assign prev 13) (branch $ 13 33) #f halt (cdr $ 0) (assign prev 14) (cdr $ 1) (assign prev 15) (tailcall match-head $ 14 $ 15) halt (gosub cddr $ 0) (assign prev 16) (cdr $ 1) (assign prev 17) (tailcall match-head $ 16 $ 17) halt (car $ 1) (assign prev 18) (gosub list? $ 18) (assign prev 19) (branch $ 19 52) #f halt (car $ 0) (assign prev 20) (car $ 1) (assign prev 21) (tailcall match? $ 20 $ 21) halt #f halt ($ 1) halt)))
+
+;; too long
+(define match-tail (assemble '((assign arg 0 0) (assign arg 1 1) (code (assign arg 0 0) (code (assign arg 0 0) (env-ref reversed) (assign prev 1) (gosub match-head $ 0 $ 1) (assign prev 2) (tailcall progn $ 2) halt) (assign prev 1) (make-env $ 0 reversed) (assign prev 2) (make-closure $ 1 $ 2) (assign prev 3) (code (assign arg 0 0) (code (assign arg 0 0) (assign arg 1 1) (quote ()) (assign prev 2) (eq? $ 0 $ 2) (assign prev 3) (gosub not $ 3) (assign prev 4) (gosub not $ 4) (assign prev 5) (branch $ 5 64) (car $ 0) (assign prev 6) (env-ref unquote) (assign prev 7) (eq? $ 6 $ 7) (assign prev 8) (gosub not $ 8) (assign prev 9) (branch $ 9 42) (gosub not #f) (assign prev 10) (branch $ 10 34) (quote ,) (assign prev 11) (eq? $ 1 $ 11) (assign prev 12) (branch $ 12 30) (cons $ 1 $ 0) halt (env-ref unquote) (assign prev 13) (cons $ 13 $ 0) halt (quote ,) (assign prev 14) (cdr $ 0) (assign prev 15) (cons $ 1 $ 15) (assign prev 16) (cons $ 14 $ 16) halt (gosub not #t) (assign prev 17) (branch $ 17 56) (quote ,) (assign prev 18) (eq? $ 1 $ 18) (assign prev 19) (branch $ 19 52) (cons $ 1 $ 0) halt (env-ref unquote) (assign prev 20) (cons $ 20 $ 0) halt (quote ,) (assign prev 21) (cdr $ 0) (assign prev 22) (cons $ 1 $ 22) (assign prev 23) (cons $ 21 $ 23) halt (gosub not #t) (assign prev 24) (branch $ 24 78) (quote ,) (assign prev 25) (eq? $ 1 $ 25) (assign prev 26) (branch $ 26 74) (cons $ 1 $ 0) halt (env-ref unquote) (assign prev 27) (cons $ 27 $ 0) halt (quote ,) (assign prev 28) (cdr $ 0) (assign prev 29) (cons $ 1 $ 29) (assign prev 30) (cons $ 28 $ 30) halt) (assign prev 1) (make-env $ 0 unquote) (assign prev 2) (make-closure $ 1 $ 2) (assign prev 3) (quote ()) (assign prev 4) (env-ref template) (assign prev 5) (gosub foldl $ 3 $ 4 $ 5) (assign prev 6) (tailcall progn $ 6) halt) (assign prev 4) (make-env template) (assign prev 5) (make-closure $ 4 $ 5) (assign prev 6) (gensym) (assign prev 7) (gosub $ 6 $ 7) (assign prev 8) (tailcall $ 3 $ 8) halt) (assign prev 2) (make-env $ 0 template) (assign prev 3) (make-closure $ 2 $ 3) (assign prev 4) (gosub reverse $ 1) (assign prev 5) (tailcall $ 4 $ 5) halt)))
+
+(define match-centre (assemble '((assign arg 0 0) (assign arg 1 1) (quote ()) (assign prev 2) (eq? $ 0 $ 2) (assign prev 3) (branch $ 3 27) (quote ()) (assign prev 4) (eq? $ 1 $ 4) (assign prev 5) (branch $ 5 25) (gosub match-head $ 0 $ 1) (assign prev 6) (eq? $ 6 #f) (assign prev 7) (gosub not $ 7) (assign prev 8) (branch $ 8 23) (cdr $ 1) (assign prev 9) (tailcall match-centre $ 0 $ 9) halt (tailcall match-head $ 0 $ 1) halt #f halt ($ 1) halt)))
+
+(define split (assemble '((assign arg 0 0) (assign arg 1 1) (code (assign arg 0 0) (assign arg 1 1) (env-ref on) (assign prev 2) (eq? $ 0 $ 2) (assign prev 3) (branch $ 3 15) (car $ 1) (assign prev 4) (cons $ 0 $ 4) (assign prev 5) (cdr $ 1) (assign prev 6) (cons $ 5 $ 6) halt (quote ()) (assign prev 7) (cons $ 7 $ 1) halt) (assign prev 2) (make-env $ 1 on) (assign prev 3) (make-closure $ 2 $ 3) (assign prev 4) (quote (())) (assign prev 5) (tailcall foldr $ 4 $ 5 $ 0) halt)))
+
+;; too long
+(define match? (assemble '((assign arg 0 0) (assign arg 1 1) (atom? $ 1) (assign prev 2) (branch $ 2 27) (code (assign arg 0 0) (code (assign arg 0 0) (code (assign arg 0 0) (code (assign arg 0 0) (env-ref head-matches?) (assign prev 1) (gosub not $ 1) (assign prev 2) (branch $ 2 26) (env-ref tail-matches?) (assign prev 3) (gosub not $ 3) (assign prev 4) (branch $ 4 22) (gosub not $ 0) (assign prev 5) (branch $ 5 18) (gosub not #f) (assign prev 6) (tailcall progn $ 6) halt (gosub not #t) (assign prev 7) (tailcall progn $ 7) halt (gosub not #t) (assign prev 8) (tailcall progn $ 8) halt (gosub not #t) (assign prev 9) (tailcall progn $ 9) halt) (assign prev 1) (make-env head-matches? $ 0 tail-matches?) (assign prev 2) (make-closure $ 1 $ 2) (assign prev 3) (env-ref actual-groups) (assign prev 4) (gosub count $ 4) (assign prev 5) (> $ 5 2) (assign prev 6) (branch $ 6 16) (tailcall $ 3 #t) halt (code (assign arg 0 0) (assign arg 1 1) (atom? $ 0) (assign prev 2) (branch $ 2 7) (tailcall match-centre $ 1 $ 0) halt ($ 0) halt) (assign prev 7) (env-ref actual-groups) (assign prev 8) (gosub last $ 8) (assign prev 9) (env-ref actual-groups) (assign prev 10) (car $ 10) (assign prev 11) (env-ref arg) (assign prev 12) (gosub match-head $ 11 $ 12) (assign prev 13) (gosub match-tail $ 9 $ 13) (assign prev 14) (env-ref actual-groups) (assign prev 15) (cdr $ 15) (assign prev 16) (gosub drop-last $ 16) (assign prev 17) (gosub foldl $ 7 $ 14 $ 17) (assign prev 18) (tailcall $ 3 $ 18) halt) (assign prev 1) (make-env $ 0 head-matches? arg actual-groups) (assign prev 2) (make-closure $ 1 $ 2) (assign prev 3) (env-ref actual-groups) (assign prev 4) (gosub last $ 4) (assign prev 5) (quote ()) (assign prev 6) (eq? $ 5 $ 6) (assign prev 7) (branch $ 7 33) (env-ref actual-groups) (assign prev 8) (gosub last $ 8) (assign prev 9) (env-ref arg) (assign prev 10) (gosub match-tail $ 9 $ 10) (assign prev 11) (eq? $ 11 #f) (assign prev 12) (gosub not $ 12) (assign prev 13) (branch $ 13 31) (tailcall $ 3 #f) halt (tailcall $ 3 #t) halt (tailcall $ 3 #t) halt) (assign prev 1) (make-env $ 0 actual-groups arg) (assign prev 2) (make-closure $ 1 $ 2) (assign prev 3) (car $ 0) (assign prev 4) (quote ()) (assign prev 5) (eq? $ 4 $ 5) (assign prev 6) (branch $ 6 29) (car $ 0) (assign prev 7) (env-ref arg) (assign prev 8) (gosub match-head $ 7 $ 8) (assign prev 9) (eq? $ 9 #f) (assign prev 10) (gosub not $ 10) (assign prev 11) (branch $ 11 27) (tailcall $ 3 #f) halt (tailcall $ 3 #t) halt (tailcall $ 3 #t) halt) (assign prev 3) (make-env $ 1 arg) (assign prev 4) (make-closure $ 3 $ 4) (assign prev 5) (code (assign arg 0 0) (code (assign arg 0 0) (assign arg 1 1) (quote ()) (assign prev 2) (eq? $ 0 $ 2) (assign prev 3) (gosub not $ 3) (assign prev 4) (gosub not $ 4) (assign prev 5) (branch $ 5 60) (env-ref splicing-unquote) (assign prev 6) (car $ 0) (assign prev 7) (eq? $ 6 $ 7) (assign prev 8) (gosub not $ 8) (assign prev 9) (branch $ 9 40) (gosub not #f) (assign prev 10) (branch $ 10 34) (quote ,@) (assign prev 11) (eq? $ 1 $ 11) (assign prev 12) (branch $ 12 30) (cons $ 1 $ 0) halt (env-ref splicing-unquote) (assign prev 13) (cons $ 13 $ 0) halt (quote ,@) (assign prev 14) (cdr $ 0) (assign prev 15) (cons $ 14 $ 15) halt (gosub not #t) (assign prev 16) (branch $ 16 54) (quote ,@) (assign prev 17) (eq? $ 1 $ 17) (assign prev 18) (branch $ 18 50) (cons $ 1 $ 0) halt (env-ref splicing-unquote) (assign prev 19) (cons $ 19 $ 0) halt (quote ,@) (assign prev 20) (cdr $ 0) (assign prev 21) (cons $ 20 $ 21) halt (gosub not #t) (assign prev 22) (branch $ 22 74) (quote ,@) (assign prev 23) (eq? $ 1 $ 23) (assign prev 24) (branch $ 24 70) (cons $ 1 $ 0) halt (env-ref splicing-unquote) (assign prev 25) (cons $ 25 $ 0) halt (quote ,@) (assign prev 26) (cdr $ 0) (assign prev 27) (cons $ 26 $ 27) halt) (assign prev 1) (make-env $ 0 splicing-unquote) (assign prev 2) (make-closure $ 1 $ 2) (assign prev 3) (quote ()) (assign prev 4) (env-ref template) (assign prev 5) (gosub foldl $ 3 $ 4 $ 5) (assign prev 6) (gosub reverse $ 6) (assign prev 7) (tailcall progn $ 7) halt) (assign prev 6) (make-env $ 0 template) (assign prev 7) (make-closure $ 6 $ 7) (assign prev 8) (gensym) (assign prev 9) (gosub $ 8 $ 9) (assign prev 10) (quote ,@) (assign prev 11) (gosub split $ 10 $ 11) (assign prev 12) (tailcall $ 5 $ 12) halt #f halt)))
+
+(define take-while (assemble '((assign arg 0 0) (assign arg 1 1) (quote ()) (assign prev 2) (eq? $ 1 $ 2) (assign prev 3) (branch $ 3 22) (car $ 1) (assign prev 4) (gosub $ 0 $ 4) (assign prev 5) (branch $ 5 14) (quote ()) halt (car $ 1) (assign prev 6) (cdr $ 1) (assign prev 7) (gosub take-while $ 0 $ 7) (assign prev 8) (cons $ 6 $ 8) halt (quote ()) halt)))
+
+;; too long
+(define extract-values-from-template (assemble '((assign arg 0 0) (quote ()) (assign prev 1) (eq? $ 0 $ 1) (assign prev 2) (branch $ 2 104) (car $ 0) (assign prev 3) (quote ,) (assign prev 4) (eq? $ 3 $ 4) (assign prev 5) (branch $ 5 76) (car $ 0) (assign prev 6) (quote ,@) (assign prev 7) (eq? $ 6 $ 7) (assign prev 8) (branch $ 8 48) (branch #f 40) (car $ 0) (assign prev 9) (gosub list? $ 9) (assign prev 10) (branch $ 10 30) (cdr $ 0) (assign prev 11) (tailcall extract-values-from-template $ 11) halt (car $ 0) (assign prev 12) (gosub extract-values-from-template $ 12) (assign prev 13) (cdr $ 0) (assign prev 14) (gosub extract-values-from-template $ 14) (assign prev 15) (tailcall append $ 13 $ 15) halt (gosub cadr $ 0) (assign prev 16) (gosub cddr $ 0) (assign prev 17) (gosub extract-values-from-template $ 17) (assign prev 18) (cons $ 16 $ 18) halt (branch #t 68) (car $ 0) (assign prev 19) (gosub list? $ 19) (assign prev 20) (branch $ 20 58) (cdr $ 0) (assign prev 21) (tailcall extract-values-from-template $ 21) halt (car $ 0) (assign prev 22) (gosub extract-values-from-template $ 22) (assign prev 23) (cdr $ 0) (assign prev 24) (gosub extract-values-from-template $ 24) (assign prev 25) (tailcall append $ 23 $ 25) halt (gosub cadr $ 0) (assign prev 26) (gosub cddr $ 0) (assign prev 27) (gosub extract-values-from-template $ 27) (assign prev 28) (cons $ 26 $ 28) halt (branch #t 96) (car $ 0) (assign prev 29) (gosub list? $ 29) (assign prev 30) (branch $ 30 86) (cdr $ 0) (assign prev 31) (tailcall extract-values-from-template $ 31) halt (car $ 0) (assign prev 32) (gosub extract-values-from-template $ 32) (assign prev 33) (cdr $ 0) (assign prev 34) (gosub extract-values-from-template $ 34) (assign prev 35) (tailcall append $ 33 $ 35) halt (gosub cadr $ 0) (assign prev 36) (gosub cddr $ 0) (assign prev 37) (gosub extract-values-from-template $ 37) (assign prev 38) (cons $ 36 $ 38) halt (quote ()) halt)))
+
+(define none? (assemble '((assign arg 0 0) (assign arg 1 1) (gosub any? $ 0 $ 1) (assign prev 2) (tailcall not $ 2) halt)))
+
+;; too long
+(define extract-template-value (assembly '((assign arg 0 0) (assign arg 1 1) (assign arg 2 2) (quote ()) (assign prev 3) (eq? $ 0 $ 3) (assign prev 4) (branch $ 4 137) (gosub match? $ 0 $ 2) (assign prev 5) (gosub not $ 5) (assign prev 6) (branch $ 6 135) (quote ()) (assign prev 7) (eq? $ 2 $ 7) (assign prev 8) (branch $ 8 133) (car $ 0) (assign prev 9) (quote ,) (assign prev 10) (eq? $ 9 $ 10) (assign prev 11) (branch $ 11 120) (car $ 0) (assign prev 12) (quote ,@) (assign prev 13) (eq? $ 12 $ 13) (assign prev 14) (branch $ 14 68) (car $ 0) (assign prev 15) (gosub list? $ 15) (assign prev 16) (branch $ 16 43) (cdr $ 0) (assign prev 17) (cdr $ 2) (assign prev 18) (tailcall extract-template-value $ 17 $ 1 $ 18) halt (car $ 0) (assign prev 19) (car $ 2) (assign prev 20) (gosub extract-template-value $ 19 $ 1 $ 20) (assign prev 21) (quote ()) (assign prev 22) (eq? $ 21 $ 22) (assign prev 23) (gosub not $ 23) (assign prev 24) (branch $ 24 62) (cdr $ 0) (assign prev 25) (cdr $ 2) (assign prev 26) (tailcall extract-template-value $ 25 $ 1 $ 26) halt (car $ 0) (assign prev 27) (car $ 2) (assign prev 28) (tailcall extract-template-value $ 27 $ 1 $ 28) halt (gosub cadr $ 0) (assign prev 29) (eq? $ 29 $ 1) (assign prev 30) (branch $ 30 95) (gosub cddr $ 0) (assign prev 31) (code (assign arg 0 0) (env-ref template) (assign prev 1) (env-ref from) (assign prev 2) (gosub drop $ 0 $ 2) (assign prev 3) (tailcall match? $ 1 $ 3) halt) (assign prev 32) (make-env $ 0 template $ 2 from) (assign prev 33) (make-closure $ 32 $ 33) (assign prev 34) (gosub count $ 2) (assign prev 35) (gosub inc $ 35) (assign prev 36) (gosub range 0 $ 36 1) (assign prev 37) (gosub take-while $ 34 $ 37) (assign prev 38) (gosub last $ 38) (assign prev 39) (gosub drop $ 39 $ 2) (assign prev 40) (tailcall extract-template-value $ 31 $ 1 $ 40) halt (gosub count $ 0) (assign prev 41) (> $ 41 2) (assign prev 42) (branch $ 42 102) ($ 2) halt (code (assign arg 0 0) (env-ref template) (assign prev 1) (env-ref from) (assign prev 2) (gosub drop $ 0 $ 2) (assign prev 3) (tailcall match? $ 1 $ 3) halt) (assign prev 43) (make-env $ 0 template $ 2 from) (assign prev 44) (make-closure $ 43 $ 44) (assign prev 45) (gosub count $ 2) (assign prev 46) (gosub inc $ 46) (assign prev 47) (gosub range 0 $ 47 1) (assign prev 48) (gosub take-while $ 45 $ 48) (assign prev 49) (gosub last $ 49) (assign prev 50) (tailcall take $ 50 $ 2) halt (gosub cadr $ 0) (assign prev 51) (eq? $ 51 $ 1) (assign prev 52) (branch $ 52 131) (gosub cddr $ 0) (assign prev 53) (cdr $ 2) (assign prev 54) (tailcall extract-template-value $ 53 $ 1 $ 54) halt (car $ 2) halt (quote ()) halt panic halt (quote ()) halt)))
+
+(define flatten (assemble '((assign arg 0 0) (code (assign arg 0 0) (gosub list? $ 0) (assign prev 1) (branch $ 1 6) (tailcall list $ 0) halt (tailcall flatten $ 0) halt) (assign prev 1) (tailcall mapcat $ 1 $ 0) halt)))
+
+(define postwalk (assemble '((assign arg 0 0) (assign arg 1 1) (gosub list? $ 0) (assign prev 2) (branch $ 2 7) (tailcall $ 1 $ 0) halt (code (assign arg 0 0) (env-ref fn) (assign prev 1) (tailcall postwalk $ 0 $ 1) halt) (assign prev 3) (make-env $ 1 fn) (assign prev 4) (make-closure $ 3 $ 4) (assign prev 5) (gosub map $ 5 $ 0) (assign prev 6) (tailcall $ 1 $ 6) halt)))
+
+(define prewalk (assemble '((assign arg 0 0) (assign arg 1 1) (gosub list? $ 0) (assign prev 2) (branch $ 2 7) (tailcall $ 1 $ 0) halt (code (assign arg 0 0) (env-ref fn) (assign prev 1) (tailcall prewalk $ 0 $ 1) halt) (assign prev 3) (make-env $ 1 fn) (assign prev 4) (make-closure $ 3 $ 4) (assign prev 5) (gosub $ 1 $ 0) (assign prev 6) (tailcall map $ 5 $ 6) halt)))
+
+(define unique (assemble '((assign arg 0 0) (code (assign arg 0 0) (assign arg 1 1) (gosub partial eq? $ 0) (assign prev 2) (gosub any? $ 2 $ 1) (assign prev 3) (branch $ 3 9) (cons $ 0 $ 1) halt ($ 1) halt) (assign prev 1) (quote ()) (assign prev 2) (tailcall foldr $ 1 $ 2 $ 0) halt)))
+
+(define add-env-ref-calls (assemble '((assign arg 0 0) (assign arg 1 1) (gosub list? $ 0) (assign prev 2) (branch $ 2 20) (gosub partial eq? $ 0) (assign prev 3) (gosub any? $ 3 $ 1) (assign prev 4) (branch $ 4 12) ($ 0) halt (quote env-ref) (assign prev 5) (gosub list $ 5) (assign prev 6) (gosub list $ 0) (assign prev 7) (tailcall append $ 6 $ 7) halt (car $ 0) (assign prev 8) (quote make-closure) (assign prev 9) (eq? $ 8 $ 9) (assign prev 10) (branch $ 10 35) (code (assign arg 0 0) (env-ref free-symbols) (assign prev 1) (tailcall add-env-ref-calls $ 0 $ 1) halt) (assign prev 11) (make-env $ 1 free-symbols) (assign prev 12) (make-closure $ 11 $ 12) (assign prev 13) (tailcall map $ 13 $ 0) halt ($ 0) halt)))
+
+;; too long
+(define referenced-free-variables (assemble '((assign arg 0 0) (assign arg 1 1) (gosub list? $ 0) (assign prev 2) (gosub not $ 2) (assign prev 3) (branch $ 3 56) (car $ 0) (assign prev 4) (quote quote) (assign prev 5) (eq? $ 4 $ 5) (assign prev 6) (gosub not $ 6) (assign prev 7) (gosub not $ 7) (assign prev 8) (branch $ 8 37) (gosub not #f) (assign prev 9) (branch $ 9 27) (gosub partial eq? $ 0) (assign prev 10) (gosub filter $ 10 $ 1) (assign prev 11) (tailcall unique $ 11) halt (code (assign arg 0 0) (env-ref free-variables) (assign prev 1) (tailcall referenced-free-variables $ 0 $ 1) halt) (assign prev 12) (make-env $ 1 free-variables) (assign prev 13) (make-closure $ 12 $ 13) (assign prev 14) (gosub mapcat $ 14 $ 0) (assign prev 15) (tailcall unique $ 15) halt (gosub not #t) (assign prev 16) (branch $ 16 46) (gosub partial eq? $ 0) (assign prev 17) (gosub filter $ 17 $ 1) (assign prev 18) (tailcall unique $ 18) halt (code (assign arg 0 0) (env-ref free-variables) (assign prev 1) (tailcall referenced-free-variables $ 0 $ 1) halt) (assign prev 19) (make-env $ 1 free-variables) (assign prev 20) (make-closure $ 19 $ 20) (assign prev 21) (gosub mapcat $ 21 $ 0) (assign prev 22) (tailcall unique $ 22) halt (gosub not #t) (assign prev 23) (branch $ 23 65) (gosub partial eq? $ 0) (assign prev 24) (gosub filter $ 24 $ 1) (assign prev 25) (tailcall unique $ 25) halt (code (assign arg 0 0) (env-ref free-variables) (assign prev 1) (tailcall referenced-free-variables $ 0 $ 1) halt) (assign prev 26) (make-env $ 1 free-variables) (assign prev 27) (make-closure $ 26 $ 27) (assign prev 28) (gosub mapcat $ 28 $ 0) (assign prev 29) (tailcall unique $ 29) halt)))
+
+(define extract-labels (assemble '((assign arg 0 0) (gosub list? $ 0) (assign prev 1) (branch $ 1 6) (quote ()) halt (car $ 0) (assign prev 2) (quote label) (assign prev 3) (eq? $ 2 $ 3) (assign prev 4) (branch $ 4 15) (tailcall mapcat extract-labels $ 0) halt (gosub cadr $ 0) (assign prev 5) (gosub list $ 5) (assign prev 6) (gosub nth $ 0 2) (assign prev 7) (gosub list? $ 7) (assign prev 8) (branch $ 8 28) (quote ()) (assign prev 9) (tailcall append $ 6 $ 9) halt (gosub nth $ 0 2) (assign prev 10) (gosub mapcat extract-labels $ 10) (assign prev 11) (tailcall append $ 6 $ 11) halt)))
+
+(define get-env-variables (assemble '((assign arg 0 0) (gosub cadr $ 0) (assign prev 1) (gosub nth $ 0 2) (assign prev 2) (code (assign arg 0 0) (gosub list? $ 0) (assign prev 1) (gosub not $ 1) (assign prev 2) (branch $ 2 29) (car $ 0) (assign prev 3) (quote lambda) (assign prev 4) (eq? $ 3 $ 4) (assign prev 5) (gosub not $ 5) (assign prev 6) (branch $ 6 22) (gosub not #f) (assign prev 7) (branch $ 7 20) ($ 0) halt (quote ()) halt (gosub not #t) (assign prev 8) (branch $ 8 27) ($ 0) halt (quote ()) halt (gosub not #t) (assign prev 9) (branch $ 9 34) ($ 0) halt (quote ()) halt) (assign prev 3) (gosub prewalk $ 2 $ 3) (assign prev 4) (gosub extract-labels $ 4) (assign prev 5) (tailcall append $ 1 $ 5) halt)))
+
+;; too long
+(define convert-lambda (assemble '((assign arg 0 0) (assign arg 1 1) (code (assign arg 0 0) (code (assign arg 0 0) (code (assign arg 0 0) (code (assign arg 0 0) (env-ref closed-vars) (assign prev 1) (gosub count $ 1) (assign prev 2) (> $ 2 0) (assign prev 3) (branch $ 3 10) (tailcall progn $ 0) halt (quote make-closure) (assign prev 4) (gosub list $ 4) (assign prev 5) (gosub list $ 0) (assign prev 6) (quote make-env) (assign prev 7) (gosub list $ 7) (assign prev 8) (env-ref closed-vars) (assign prev 9) (gosub append $ 8 $ 9) (assign prev 10) (gosub list $ 10) (assign prev 11) (gosub append $ 5 $ 6 $ 11) (assign prev 12) (tailcall progn $ 12) halt) (assign prev 1) (make-env $ 0 closed-vars) (assign prev 2) (make-closure $ 1 $ 2) (assign prev 3) (quote lambda) (assign prev 4) (gosub list $ 4) (assign prev 5) (env-ref lambda-expression) (assign prev 6) (gosub cadr $ 6) (assign prev 7) (gosub list $ 7) (assign prev 8) (env-ref body) (assign prev 9) (gosub list $ 9) (assign prev 10) (gosub append $ 5 $ 8 $ 10) (assign prev 11) (tailcall $ 3 $ 11) halt) (assign prev 1) (make-env lambda-expression $ 0 body) (assign prev 2) (make-closure $ 1 $ 2) (assign prev 3) (env-ref free-vars) (assign prev 4) (gosub referenced-free-variables $ 0 $ 4) (assign prev 5) (tailcall $ 3 $ 5) halt) (assign prev 1) (make-env lambda-expression free-vars) (assign prev 2) (make-closure $ 1 $ 2) (assign prev 3) (env-ref lambda-expression) (assign prev 4) (gosub nth $ 4 2) (assign prev 5) (env-ref free-vars) (assign prev 6) (gosub append $ 0 $ 6) (assign prev 7) (gosub convert-closures $ 5 $ 7) (assign prev 8) (env-ref free-vars) (assign prev 9) (gosub add-env-ref-calls $ 8 $ 9) (assign prev 10) (tailcall $ 3 $ 10) halt) (assign prev 2) (make-env $ 0 lambda-expression $ 1 free-vars) (assign prev 3) (make-closure $ 2 $ 3) (assign prev 4) (gosub get-env-variables $ 0) (assign prev 5) (tailcall $ 4 $ 5) halt)))
+
+(define mark-var-arg (assemble '((assign arg 0 0) (assign arg 1 1) (gosub list? $ 0) (assign prev 2) (gosub not $ 2) (assign prev 3) (branch $ 3 50) (car $ 0) (assign prev 4) (quote lambda) (assign prev 5) (eq? $ 4 $ 5) (assign prev 6) (gosub not $ 6) (assign prev 7) (branch $ 7 41) (gosub cadr $ 0) (assign prev 8) (atom? $ 8) (assign prev 9) (gosub not $ 9) (assign prev 10) (branch $ 10 32) (gosub not #f) (assign prev 11) (branch $ 11 28) ($ 1) halt (quote var-arg) (assign prev 12) (cons $ 12 $ 1) halt (gosub not #t) (assign prev 13) (branch $ 13 37) ($ 1) halt (quote var-arg) (assign prev 14) (cons $ 14 $ 1) halt (gosub not #t) (assign prev 15) (branch $ 15 46) ($ 1) halt (quote var-arg) (assign prev 16) (cons $ 16 $ 1) halt (gosub not #t) (assign prev 17) (branch $ 17 55) ($ 1) halt (quote var-arg) (assign prev 18) (cons $ 18 $ 1) halt)))
+
+(define convert-closures (assemble '((assign arg 0 0) (assign arg 1 1) (gosub list? $ 0) (assign prev 2) (branch $ 2 7) ($ 0) halt (car $ 0) (assign prev 3) (quote lambda) (assign prev 4) (eq? $ 3 $ 4) (assign prev 5) (branch $ 5 22) (code (assign arg 0 0) (env-ref free-vars) (assign prev 1) (tailcall convert-closures $ 0 $ 1) halt) (assign prev 6) (make-env $ 1 free-vars) (assign prev 7) (make-closure $ 6 $ 7) (assign prev 8) (tailcall map $ 8 $ 0) halt (code (assign arg 0 0) (gosub partial eq? $ 0) (assign prev 1) (env-ref expression) (assign prev 2) (gosub cadr $ 2) (assign prev 3) (tailcall none? $ 1 $ 3) halt) (assign prev 9) (make-env $ 0 expression) (assign prev 10) (make-closure $ 9 $ 10) (assign prev 11) (gosub filter $ 11 $ 1) (assign prev 12) (tailcall convert-lambda $ 0 $ 12) halt)))
+
+;; too long
+(define protect-var-args (assemble '((assign arg 0 0) (gosub list? $ 0) (assign prev 1) (gosub not $ 1) (assign prev 2) (branch $ 2 106) (car $ 0) (assign prev 3) (quote lambda) (assign prev 4) (eq? $ 3 $ 4) (assign prev 5) (gosub not $ 5) (assign prev 6) (branch $ 6 78) (gosub cadr $ 0) (assign prev 7) (atom? $ 7) (assign prev 8) (gosub not $ 8) (assign prev 9) (branch $ 9 50) (gosub not #f) (assign prev 10) (branch $ 10 32) (gosub list? $ 0) (assign prev 11) (branch $ 11 30) ($ 0) halt (tailcall map protect-var-args $ 0) halt (quote lambda) (assign prev 12) (gosub list $ 12) (assign prev 13) (gosub cadr $ 0) (assign prev 14) (gosub list $ 14) (assign prev 15) (gosub append $ 15) (assign prev 16) (gosub list $ 16) (assign prev 17) (gosub cddr $ 0) (assign prev 18) (gosub map protect-var-args $ 18) (assign prev 19) (tailcall append $ 13 $ 17 $ 19) halt (gosub not #t) (assign prev 20) (branch $ 20 60) (gosub list? $ 0) (assign prev 21) (branch $ 21 58) ($ 0) halt (tailcall map protect-var-args $ 0) halt (quote lambda) (assign prev 22) (gosub list $ 22) (assign prev 23) (gosub cadr $ 0) (assign prev 24) (gosub list $ 24) (assign prev 25) (gosub append $ 25) (assign prev 26) (gosub list $ 26) (assign prev 27) (gosub cddr $ 0) (assign prev 28) (gosub map protect-var-args $ 28) (assign prev 29) (tailcall append $ 23 $ 27 $ 29) halt (gosub not #t) (assign prev 30) (branch $ 30 88) (gosub list? $ 0) (assign prev 31) (branch $ 31 86) ($ 0) halt (tailcall map protect-var-args $ 0) halt (quote lambda) (assign prev 32) (gosub list $ 32) (assign prev 33) (gosub cadr $ 0) (assign prev 34) (gosub list $ 34) (assign prev 35) (gosub append $ 35) (assign prev 36) (gosub list $ 36) (assign prev 37) (gosub cddr $ 0) (assign prev 38) (gosub map protect-var-args $ 38) (assign prev 39) (tailcall append $ 33 $ 37 $ 39) halt (gosub not #t) (assign prev 40) (branch $ 40 116) (gosub list? $ 0) (assign prev 41) (branch $ 41 114) ($ 0) halt (tailcall map protect-var-args $ 0) halt (quote lambda) (assign prev 42) (gosub list $ 42) (assign prev 43) (gosub cadr $ 0) (assign prev 44) (gosub list $ 44) (assign prev 45) (gosub append $ 45) (assign prev 46) (gosub list $ 46) (assign prev 47) (gosub cddr $ 0) (assign prev 48) (gosub map protect-var-args $ 48) (assign prev 49) (tailcall append $ 43 $ 47 $ 49) halt)))
+
+;; too long
+(define M (assemble '((assign arg 0 0) (gosub list? $ 0) (assign prev 1) (gosub not $ 1) (assign prev 2) (branch $ 2 91) (gosub count $ 0) (assign prev 3) (eq? $ 3 3) (assign prev 4) (gosub not $ 4) (assign prev 5) (branch $ 5 68) (car $ 0) (assign prev 6) (quote lambda) (assign prev 7) (eq? $ 6 $ 7) (assign prev 8) (gosub not $ 8) (assign prev 9) (branch $ 9 45) (gosub not #f) (assign prev 10) (branch $ 10 27) ($ 0) halt (quote lambda) (assign prev 11) (gosub list $ 11) (assign prev 12) (gosub cadr $ 0) (assign prev 13) (gosub list $ 13) (assign prev 14) (gosub nth $ 0 2) (assign prev 15) (quote halt) (assign prev 16) (gosub T $ 15 $ 16) (assign prev 17) (gosub list $ 17) (assign prev 18) (tailcall append $ 12 $ 14 $ 18) halt (gosub not #t) (assign prev 19) (branch $ 19 50) ($ 0) halt (quote lambda) (assign prev 20) (gosub list $ 20) (assign prev 21) (gosub cadr $ 0) (assign prev 22) (gosub list $ 22) (assign prev 23) (gosub nth $ 0 2) (assign prev 24) (quote halt) (assign prev 25) (gosub T $ 24 $ 25) (assign prev 26) (gosub list $ 26) (assign prev 27) (tailcall append $ 21 $ 23 $ 27) halt (gosub not #t) (assign prev 28) (branch $ 28 73) ($ 0) halt (quote lambda) (assign prev 29) (gosub list $ 29) (assign prev 30) (gosub cadr $ 0) (assign prev 31) (gosub list $ 31) (assign prev 32) (gosub nth $ 0 2) (assign prev 33) (quote halt) (assign prev 34) (gosub T $ 33 $ 34) (assign prev 35) (gosub list $ 35) (assign prev 36) (tailcall append $ 30 $ 32 $ 36) halt (gosub not #t) (assign prev 37) (branch $ 37 96) ($ 0) halt (quote lambda) (assign prev 38) (gosub list $ 38) (assign prev 39) (gosub cadr $ 0) (assign prev 40) (gosub list $ 40) (assign prev 41) (gosub nth $ 0 2) (assign prev 42) (quote halt) (assign prev 43) (gosub T $ 42 $ 43) (assign prev 44) (gosub list $ 44) (assign prev 45) (tailcall append $ 39 $ 41 $ 45) halt)))
+
+(define substitute (assemble '((assign arg 0 0) (assign arg 1 1) (assign arg 2 2) (eq? $ 2 $ 0) (assign prev 3) (branch $ 3 15) (atom? $ 2) (assign prev 4) (branch $ 4 13) (gosub partial substitute $ 0 $ 1) (assign prev 5) (tailcall map $ 5 $ 2) halt ($ 2) halt ($ 1) halt)))
 
 
 
-(def-comp (match-centre template arg)
-    (cond ((nil? template) arg)
-	  ((nil? arg) #f)
-	  ((not (eq? (match-head template arg) #f)) (match-head template arg))
-	  (else (match-centre template (cdr arg)))))
-
-(def-comp (split coll on)
-    (foldr (lambda (e acc)
-	     (if (eq? e on)
-		 (cons '() acc)
-		 (cons (cons e (car acc))
-		       (cdr acc))))
-	   '(())
-	   coll))
-
-(def-comp (join coll with)
-    (if (> (count coll) 1)
-	(foldl (lambda (e acc)
-		 (append e
-			 (list with)
-			 acc))
-	       (car coll)
-	       (cdr coll))
-	coll))
-
-(def-comp (match? template arg)
-    (if (atom? arg) #f
-	(let (;; builds up the segments that must match, ignoring splicing unquote symbols
-	      (actual-groups (split (let ((splicing-unquote (gensym)))
-				      (reverse
-				       ;; drops the element after a splicing unquote
-				       (foldl (lambda (acc e)
-						(cond ((and (not (nil? acc))
-							    (eq? splicing-unquote (car acc)))
-						       (cons ',@ (cdr acc)))
-						      ((eq? e ',@)
-						       (cons splicing-unquote acc))
-						      (else (cons e acc))))
-					      '()
-					      template)))
-				    ',@))
-              (head-matches? (or (eq? (car actual-groups) '())
-				 (not (eq? (match-head (car actual-groups) arg) #f))))
-              (tail-matches? (or (eq? (last actual-groups) '())
-				 (not (eq? (match-tail (last actual-groups) arg) #f))))
-              (centre-groups-match?
-	       (if  (> (count actual-groups) 2)
-		    ;; apply each center match to what remains of the center section
-		    ;; if #f was already generated just propogate it to the end
-		    (foldl (lambda (acc e)
-			     (if (atom? acc)
-				 acc
-				 (match-centre e acc)))
-			   (match-tail (last actual-groups)
-				       (match-head (car actual-groups)
-						   arg))
-			   (drop-last (cdr actual-groups)))
-		    #t)))
-	  (and head-matches? tail-matches? centre-groups-match?))))

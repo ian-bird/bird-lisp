@@ -29,4 +29,5 @@ const (
 	MakeClosure
 	MakeEnv
 	EnvRef
+	VarArgFlag
 )

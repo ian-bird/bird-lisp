@@ -245,6 +245,12 @@ func assemble(code []Value, env *Frame) (Value, error) {
 						values:       values,
 						valueClasses: valueClasses,
 					})
+				case "var-arg":
+					instructions = append(instructions, Instruction{
+						class:        VarArgFlag,
+						values:       []Value{},
+						valueClasses: []InstructionValueClass{},
+					})
 				default:
 					return Value{
 						Car:   nil,

@@ -104,5 +104,13 @@ func main() {
 		return
 	}
 
+	// _, input, _ := Read("(macroexpand-all '(lambda (expression cont)(if (atom? expression)(` , cont , expression)(cond ((and (list? expression)(eq? (car expression) 'lambda))(` , cont ,(M expression)))((and (list? expression)(eq? (count expression) 3)(eq? (car expression) 'label))(T (nth expression 2)(` lambda (arg #) (call-with-cont label , (cadr expression) arg # , cont))))((and (list? expression)(eq? 'cond (car expression)))(foldr (lambda (pred-and-consq acc)(T (car pred-and-consq)(` lambda (pred-sym #)(branch pred-sym # ,(T (cadr pred-and-consq) cont) , acc))))(if (eq? (car (last expression)) 'else)(T (cadr (last expression)) cont)(T '() cont))(cdr (if (eq? (car (last expression)) 'else)(drop-last expression)expression))))((and (list? expression)(eq? (count expression) 2)(eq? 'quote (car expression)))(` , cont (quote , (cadr expression))))((eq? '(gensym) expression)(` call-with-cont gensym , cont))((and (list? expression)(>= (count expression) 1))(let ((gensyms (map (lambda (_) (gensym)) expression))(gensyms-and-symbols (zip gensyms expression)))(foldr (lambda (gensym-and-symbol acc)(if (atom? (cadr gensym-and-symbol))acc(T (cadr gensym-and-symbol)(` lambda (, (car gensym-and-symbol)) , acc))))(` call-with-cont ,@ (map (lambda (gensym-and-symbol)((if (atom? (cadr gensym-and-symbol))cadrcar)gensym-and-symbol))gensyms-and-symbols) , cont)gensyms-and-symbols)))(else '())))))")
+	// result, err := Eval(input, &frame)
+
+	// if err != nil {
+	// 	fmt.Printf("%v", err)
+	// }
+
+	// fmt.Printf("%v", Print(result))
 	Repl(&frame)
 }
