@@ -2,21 +2,21 @@
 
 (label nil? (macro (v) (list 'eq? v (list 'quote '()))))
 
-;; needs to be updated to use gensym
+;; defines new functions, using scheme formatting
 (label define
        (macro args
-	      (cond ((atom? (car args))  ;; the car is the name being assigned. If its an atom, then plain label.
+	      (cond ((atom? (car args))  ; the car is the name being assigned. If its an atom, then plain label.
 		     (cons  'label args))
-		    (else ;; else its a function definition.
+		    (else ; else its a function definition.
 		     (list 'label
-			   (car (car args)) ;; the first argument in the list is the name
+			   (car (car args)) ; the first argument in the list is the name
 			   (cons 'lambda
-				 (cons (cdr (car args)) ;; the rest of the first argument are the args
-				       (cdr args)))))))) ;; and the rest is the fn body
+				 (cons (cdr (car args)) ; the rest of the first argument are the args
+				       (cdr args)))))))) ; and the rest is the fn body
 
 
 
-;; udpate to use gensym
+;; works like define but for creating new macros
 (define defmacro
        (macro args
 	      (list 'label
@@ -25,52 +25,71 @@
 			  (cons (cdr (car args))
 				(cdr args))))))
 
-;; update to use gensym
+;; a regular if statement
 (defmacro (if pred consq alt)
     (list 'cond (list pred consq)
      (list 'else alt)))
 
+;; returns the number of elements in the supplied list
 (define (count coll)
     (if (nil? coll)
 	0
 	(+ 1 (count (cdr coll)))))
 
+;; fold left, meaning, apply an operation from the
+;; head of the list to the tail, carrying an accumulator
+;; on each step and returning it at the end
 (define (foldl fn basis coll)
     (if (nil? coll)
 	basis
 	(foldl fn (fn basis (car coll)) (cdr coll))))
 
+;; flips the argument order for a 2 arg function
 (define (flip f)
     (lambda (a b)(f b a)))
 
+;; reverses order of a list
 (define (reverse coll)
     (foldl (lambda (acc e)(cons e acc)) '() coll))
 
+;; joins 2 lists into 1 larger list
 (define (append2 a b)
     (foldl (flip cons) b (reverse a)))
 
+;; fold right, works like fold left but applies
+;; from tail to head
 (define (foldr fn basis coll)
     (foldl (flip fn) basis (reverse coll)))
 
+;; applies a function to each element in a list and returns
+;; a list of the outputs
 (define (map fn coll)
     (reverse (foldl (lambda (acc e) (cons (fn e) acc)) '() coll)))
 
+;; removes items that evaluate to false when passed to the function
 (define (filter fn coll)
     (foldr (lambda (e acc) (if (fn e) (cons e acc) acc)) '() coll))
 
 (define (even? x)
     (eq? 0 (% x 2)))
 
+;; returns the last item in a set
 (define (last coll)
     (if (nil? (cdr coll))
 	(car coll)
 	(last (cdr coll))))
 
+;; evalautes the list of arguments provided and returns the result
+;; of the last one
 (define progn (lambda args (last args)))
 
+;; append2 but works with more than 2 lists
 (define append (lambda colls (foldr append2 '() colls)))
 
-;; update to use gensym
+;; this is equivalent to common-lisp's let*
+;; it creates new bindings that can be referenced in the body
+;; of the let, and later bindings in the let block can reference
+;; earlier ones.
 (define let (macro let-args
 		   ((lambda (bindings body)
 		      (if (nil? bindings)
@@ -83,12 +102,16 @@
 		    (car let-args)
 		    (cdr let-args))))
 
+;; evaluates a function by doing some runtime trickery with macros
 (defmacro (eval x)
     (let ((arg (gensym)))
       (list (list 'lambda (list arg) (list (list 'macro '() arg))) x)))
 
 
 ;; uses eval; MUST be interpreted
+;;
+;; takes a function and a list of arguments to be passed to it
+;; and returns the output
 (define (apply fn args)
     ;; we need to quote each arg and the function
     ;; since theyve already been evaluated on the way in,
@@ -97,51 +120,67 @@
     (eval (cons (if (eq? (type fn) 'symbol) fn (list 'quote fn))
 	   (map (lambda (e) (list 'quote e)) args))))
 
+;; identity returns the thing passed to it, useful sometimes
 (define (identity x) x)
 
+;; returns the logical opposite of its argument
 (define (not x) (if x #f #t))
 
+;; less than
 (define < (macro operands (cons '> (reverse operands))))
 
+;; applies some of the arguments and returns a function
+;; that will take the rest of them
 (define partial (lambda fn-and-args
 		  (lambda rest-of-args
 		    (apply (car fn-and-args) (append (cdr fn-and-args) rest-of-args)))))
 
+;; logical or
 (define or (macro args (cons 'cond
 			     (append (map (lambda (arg) (list arg #t))
 					  args)
 				     '((else #f))))))
 
+;; logical and
 (define and (macro args (cons 'cond
 			      (append (map (lambda (arg) (list (list 'not arg) #f))
 					   args)
 				      '((else #t))))))
 
+;; applies before and returns it if before is true,
+;; otherwise continues down and applies after on the way back up
 (define (walk before after code)
     (cond ((before code) (before code))
 	  (else (after (map (partial walk before after) code)))))
 
+;; returns true if f is true for any element in coll
 (define (any? f coll)
     (apply or (map f coll)))
 
+;; takes several lists, and returns the collections for each index.
+;; e.g. (zip '(1 2 3) '(a b c)) would return '((1 a) (2 b) (3 c))
 (define zip (lambda lists
 	      (if (any? (lambda (x)(nil? x)) lists)
 		  '()
 		  (cons (map car lists) (apply zip (map cdr lists))))))
 
+;; returns true if f is true for all arguments
 (define (all? f coll)
     (apply and (map f coll)))
 
+;; greater than or equal to
 (define >= (lambda args
 	     (all? (lambda (x) (or (> x 0) (eq? x 0)))
 		   (map (partial apply -)
 			(zip args (cdr args))))))
 
+;; less than or equal to
 (define <= (lambda args
 	     (all? (lambda (x) (or (< x 0) (eq? x 0)))
 		   (map (partial apply -)
 			(zip args (cdr args))))))
 
+;; takes the last n elements of the list
 (define (take-last n coll)
     (if (nil? coll)
 	'()
@@ -149,26 +188,34 @@
 	    coll
 	    (take-last n (cdr coll)))))
 
+;; add one
 (define (inc x) (+ x 1))
 
+;; add two
 (define (dec x) (- x 1))
 
+;; takes the first n elements of the list
 (define (take n coll)
     (if (and (> n 0) (not (nil? coll)))
 	(cons (car coll) (take (dec n) (cdr coll)))
 	'()))
 
+;; removes the first n elements of the list
 (define (drop n coll)
     (if (and (> n 0) (not (nil? coll)))
 	(drop (dec n) (cdr coll))
 	coll))
 
+;; splits a long array into an array of segments of it,
+;; where each segment is size elements, and segments are made at step
+;; intervals.
 (define (partition size step coll)
     (if (>= (count coll) size)
 	(cons (take size coll)
 	      (partition size step (drop step coll)))
 	'()))
 
+;; map with f and coll and then concatenate the returned lists
 (define (mapcat f coll)
     (apply append (map f coll)))
 
@@ -186,6 +233,7 @@
 	   (replace-subseq-2 operation (cdr (cdr coll)))
 	   (replace-subseq-2 operation (cdr coll))))))
 
+;; post walk with replace subseq 2
 (define (subseq-post-walk-2 operation coll)
     (if (atom? coll)
 	coll
@@ -194,30 +242,43 @@
 	 (map (partial subseq-post-walk-2 operation)
 	      coll))))
 
-
+;; create a new alist
 (define (alist coll)
     (if (even? (count coll))
 	(map (partial apply cons) (partition 2 2 coll))
 	'()))
 
+;; get a value from the alist in m
 (define (get m k)
     (cond ((nil? m) '())
 	  ((eq? (car (car m)) k) (cdr (car m)))
 	  (else (get (cdr m) k))))
 
+;; get the nth element in a list
 (define (nth coll index)
     (car (drop index coll)))
 
+;; overwrite the value stored at k in m by passing it through f
 (define (update m k f)
     (cons (cons k (f (get m k)))
 	  m))
 
+;; returns a function that always returns x regardless of input
 (define (constantly x) (lambda (_) x))
 
+;; remove the value stored at k and k
 (define (unassoc m k)
     (filter (lambda (pair) (not (eq? (car pair) k)))
 	    m))
 
+;;; this defines a domain-specific langauge for quasi-quoting. The syntax is as close as possible to scheme
+;; comma is recognized as unquote, and comma at is recognized as splicing unquote.
+;; the ordering and placement are slightly different since there isn't support for reader macros, so
+;; what would be `(foo ,bar ,@baz) in scheme is (` foo , bar , baz)
+;;
+;; additionally however, a symbol can be followed by a # to mark that its a gensym,
+;; and all matching symbols will be replaced with the same gensym.
+;; this should reduce how frequently with-gensysms is needed
 (define ` (macro quoted-elements
 		 (let ((unquoted? (lambda (a b) (if (eq? ', a) (list 'unquote  b) #f)))
 		       (splicing-unquoted? (lambda (a b) (if (eq?  ',@ a) (list 'splicing-unquote b) #f)))
@@ -251,7 +312,8 @@
 				       (else (list 'list (cons 'append element)))))
 			       first-pass))))))
 
-
+;; creates a new list of values from from to to with step size step.
+;; (range 0 5 1) => '(0 1 2 3 4)
 (define (range from to step)
     (if (< from to)
 	(cons from (range (+ from step) to step))
@@ -268,6 +330,8 @@
 	   expanded)))
 
 ;; uses eval; MUST be interpreted
+;;
+;; expands all macros in a given list, recursively
 (define (macroexpand-all to-expand)
     (cond ((atom? to-expand) to-expand)
 	  ((and (list? (car to-expand))
@@ -289,15 +353,17 @@
 
 (define (cddr x) (cdr (cdr x)))
 
-(define (halt f) f)
+
+(define (halt f) f) ; testing fn for cps transformation
 
 ;; drops the last element
 (define (drop-last coll)
     (take (dec (count coll)) coll))
 
-(define call-with-cont (lambda args
+(define call-with-cont (lambda args ; testing fn for cps transformation
 			 ((last args) (apply (car args) (cdr (drop-last args))))))
 
+;; matches a pattern by only checking the front of it
 (define (match-head template arg)
     (cond ((nil? template) arg)
 	  ((nil? arg) #f)
@@ -309,6 +375,7 @@
 	  ((eq? (car template) (car arg)) (match-head (cdr template) (cdr arg)))
 	  (else #f)))
 
+;; matches a pattern by only checking the end of it
 (define (match-tail template arg)
     (let ((reversed (reverse arg))
 	  ;; need to flip unquotes
@@ -324,12 +391,15 @@
 		    template))))
       (match-head reversed-template reversed)))
 
+;; matches a pattern to see if it matches anywhere
 (define (match-centre template arg)
     (cond ((nil? template) arg)
 	  ((nil? arg) #f)
 	  ((not (eq? (match-head template arg) #f)) (match-head template arg))
 	  (else (match-centre template (cdr arg)))))
 
+;; split a list into a list of lists by using 'on' as a split point.
+;; returned array will not have on anywhere in any list
 (define (split coll on)
     (foldr (lambda (e acc)
 	     (if (eq? e on)
@@ -339,6 +409,7 @@
 	   '(())
 	   coll))
 
+;; join several lists together and add with between them when merging
 (define (join coll with)
     (if (> (count coll) 1)
 	(foldl (lambda (e acc)
@@ -349,6 +420,9 @@
 	       (cdr coll))
 	coll))
 
+;;; returns whether a supplied value matches a template given.
+;;; this uses a similar syntax to scheme quasi quotes, where
+;;; the arg must line up with the not unqoted parts of the template.
 (define (match? template arg)
     (if (atom? arg) #f
 	(let (;; builds up the segments that must match, ignoring splicing unquote symbols
@@ -384,12 +458,14 @@
 		    #t)))
 	  (and head-matches? tail-matches? centre-groups-match?))))
 
+;; takes from the start until pred is false
 (define (take-while pred coll)
     (cond ((nil? coll) '())
 	  ((pred (car coll))
 	   (cons (car coll) (take-while pred (cdr coll))))
 	  (else '())))
 
+;; pull all the unquoted variables from a quasi quote template
 (define (extract-values-from-template template)
     (cond ((nil? template) '())
 	  ((or (eq? (car template) ',)
@@ -401,9 +477,16 @@
 		   (extract-values-from-template (cdr template))))
 	  (else (extract-values-from-template (cdr template)))))
 
+;; returns true if pred returns false for everything in coll
 (define (none? pred coll)
     (not (any? pred coll)))
 
+;; given a template and from that matches the template,
+;; find the specific value in the template and pull the
+;; element from from that corresponds to it.
+;; e.g.
+;; (extract-template-value '(lambda (, arg) ,@ body) '(lambda (x) (+ x 1)) 'arg)
+;;   => 'x
 (define (extract-template-value template value from)
     (cond ((nil? template) '())
 	((not (match? template from)) panic)
@@ -432,6 +515,9 @@
 	     (extract-template-value (cdr template) value (cdr from))))
 	(else (extract-template-value (cdr template) value (cdr from)))))
 
+;;; destructuring bind allows for concise extraction of several values using quasi quotation syntax.
+;;; its like extract-template-value except you don't need to name the value you want, you jsut get
+;;; all of them
 (defmacro (destructuring-bind template from body)
     (` let ,(map (lambda (val)
 		   (` , val
@@ -439,6 +525,13 @@
 		(extract-values-from-template template))
       , body))
 
+;;; pattern matching operator. This allows you to give a value and a list of possible templates
+;;; it could match, and then control passes to the first one matched, at which point
+;;; you nave access to all the values from the template.
+;;
+;; I originally used this for some of the more complex functions in the compiler,
+;; but performance was too slow, and optimizing it to use finite state machines
+;; was beyond the scope of the project
 (define match
     (macro clauses
 	   (let ((match-on (car clauses))
@@ -455,6 +548,7 @@
 			    cases)
 		     ,@ else-statement))))
 
+;; lifts all values in a list into a single level deep list
 (define (flatten coll)
     (mapcat (lambda (x)
 	   (if (list? x)
@@ -462,16 +556,19 @@
 	       (list x)))
 	    coll))
 
+;; applies function after its been applied to all its children
 (define (postwalk form fn)
     (if (list? form)
 	(fn (map (lambda (e) (postwalk e fn)) form))
 	(fn form)))
 
+;; applies fn to itself then to all its children
 (define (prewalk form fn)
     (if (list? form)
 	(map (lambda (e) (prewalk e fn)) (fn form))
 	(fn form)))
 
+;; returns only the unique elements in a list
 (define (unique coll)
     (foldr (lambda (e acc)
 	     (if (any? (partial eq? e) acc)
@@ -480,6 +577,16 @@
 	   '()
 	   coll))
 
+;;;
+;;; the following block of code does closure conversion. lambda forms
+;;; with implicit access to all enclosing scopes have all of their
+;;; potentially free variables removed and replaced with explicit
+;;; env-ref calls, and an environment containing these is built
+;;; and attached to the lambda with make-closure.
+;;;
+
+;; given a list of free symbols that need to be referenced from a given
+;; inner function, replace them with env-ref calls,
 (define (add-env-ref-calls expression free-symbols)
     (if (list? expression)
 	(if (or (eq? (car expression) 'make-closure)
@@ -491,6 +598,7 @@
 	    (` env-ref , expression)
 	    expression)))
 
+;; get the variables in a lower function that its accessing from the outer scope
 (define (referenced-free-variables expression free-variables)
     (unique
      (if (and (list? expression)
@@ -499,6 +607,7 @@
 		 expression)
 	 (filter (partial eq? expression) free-variables))))
 
+;; get the labeled terms, since those are also in scope for deeper functions
 (define (extract-labels form)
     (if (list? form)
 	(if (eq? (car form) 'label)
@@ -509,6 +618,7 @@
 	    (mapcat extract-labels form))
 	'()))
 
+;; get all the variables created locally in this function
 (define (get-env-variables lambda-expression)
     (append (cadr lambda-expression)
 	    (extract-labels
@@ -520,6 +630,9 @@
 			    '()
 			    e))))))
 
+;; convert a lambda into an explicit closure, if needed.
+;; gets all the variables it uses, replaces its body with env-refs,
+;; and creates the enviromnment and make-closure calls
 (define (convert-lambda lambda-expression free-vars)
     (let ((env-vars (get-env-variables lambda-expression))
 	  (body (add-env-ref-calls
@@ -532,6 +645,8 @@
 	  (` make-closure , replacement-lambda (make-env ,@ closed-vars))
 	  replacement-lambda)))
 
+;; convert all the lambdas in  a general expression into explicit closures,
+;; if needed.
 (define (convert-closures expression free-vars)
     (if (list? expression)
 	(if (eq? (car expression) 'lambda)
@@ -542,6 +657,7 @@
 		 expression))
 	expression))
 
+;; remove var args so stuff doesnt explode.
 (define (protect-var-args expression)
     (if (and (list? expression)
 	     (eq? (car expression) 'lambda)
@@ -551,7 +667,17 @@
 	    (map protect-var-args expression)
 	    expression)))
 
-;; M expression converts a non-cps form
+;;;;
+;;;; M and T constitute the functions that perform contination passing style transformation.
+;;;; this converts the implicit flow of control in normal style into an explicit one,
+;;;; where all atomic operations take an additional argument in the form of a single-arg
+;;;; function that receives the result of the operation when its complete.
+;;;; Converting to this style gives us a linear flow of control that can then be complied
+;;;; into assembly.
+;;;;
+;;;;
+
+;; M expression converts a non-cps form lambda
 ;; into cps form
 
 ;; expand m to convert primitive functions to cps
@@ -567,6 +693,12 @@
     (cond ((eq? body from) to)
 	  ((atom? body) body)
 	  (else (map (partial substitute from to) body))))
+
+;;
+;; T takes a continuation and a complex form and breaks it down
+;; into smaller forms while mainitaining flow of control towards
+;; the given continatuion
+;;
 
 (define (T-cond expression cont)
     (foldr (lambda (pred-and-consq acc)
@@ -629,6 +761,11 @@
 	   (T-func expression cont))
 	  (else '())))
 
+;;
+;; the result of CPS trasnformation is still a deeply nested structure,
+;; and unfold converts it to a linear sequence of instructions.
+;;
+
 (define (unfold-lambda-call cps-form)
     (` ,(unfold (cadr cps-form))
 	       ,@(map (lambda (param) (` assign , param))
@@ -687,8 +824,9 @@
 	     cps-form)
 	    (else (list cps-form)))))
 
-
-
+;; fix assignments adds in stack numbers and references
+;; to stack variables, which saves us from having to look up
+;; bindings in msot cases.
 (define (fix-assignments instructions)
     (let ((stack-value 0)
 	  (gensym-alist '()))
@@ -738,6 +876,8 @@
 	      '()
 	      instructions))))
 
+;; works like foldl but returns an array where each element
+;; is the state of acc when it was on that element.
 (define (scan f basis coll)
     (reverse
      (foldl (lambda (acc e)
@@ -745,6 +885,9 @@
 	    (list basis)
 	    coll)))
 
+;; replace branch to gensym and arrow marker gensym
+;; with branch and then the instruction number to goto,
+;; with the branch label removed.
 (define (fix-branches instructions)
     (let ((goto-alist '()))
       (foldr (lambda (instruction-and-line-num acc)
@@ -778,6 +921,9 @@
 			instructions)))))
 
 ;; uses eval; MUST be interpreted
+
+;; figure out what calls are to functions and add in
+;; a gosub in front, so the runtime knows to go call a function.
 (define (add-gosubs instructions)
     (map (lambda (instruction)
 	   (cond ((atom? instruction)
@@ -796,6 +942,10 @@
 		 (else (cons 'gosub instruction))))
 	 instructions))
 
+;; if a gosub appears right before a halt instruction, it
+;; can be replaced with a tail call, since we don't need
+;; the state of any stack variables when we return.
+;; so mark it as a tail call.
 (define (add-tailcalls instructions)
     (foldr (lambda (instruction prevs)
 	     (cons (cond ((or (nil? prevs)
@@ -816,6 +966,9 @@
 	    (mapcat get-immediate-lambdas expression))
 	'()))
 
+;; adds in a var arg marker for functions that take variable numbers of arguments,
+;; so that the caller knows to place all its args in the first slot, rather
+;; than spreading them across several.
 (define (mark-var-args expression assembly)
     (let ((immediate-lambdas (get-immediate-lambdas (cddr expression)))
 	  (new-asm
@@ -848,6 +1001,7 @@
 		(cons '(var-arg) fixed-branches)))
 	  new-asm)))
 
+;; perform all the post-unfolding work recursively across code blocks
 (define (optimize instructions)
     (map (lambda (instruction)
 	   (cond ((atom? instruction) instruction)
@@ -860,6 +1014,7 @@
 	  (fix-assignments
 	   instructions))))))
 
+;; get the assembly code for a lambda form provided
 (define (to-assembly lambda-expression)
     (mark-var-args
      lambda-expression
@@ -872,9 +1027,11 @@
 	   lambda-expression))
 	 '()))))))
 
+;; compile a quoted lambda expression
 (define (compile lambda-expression)
     (assemble (to-assembly lambda-expression)))
 
+;; creates a new compiled function
 (defmacro (def-comp call-form body)
     (` define ,(car call-form)
        (compile (quote (lambda ,(cdr call-form) , body)))))
