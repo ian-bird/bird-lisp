@@ -255,6 +255,10 @@ executionLoop:
 			if env.bindings == nil {
 				env.bindings = make(map[string]Value)
 			}
+
+			if values[0].Type != Symbol {
+				return nilValue, fmt.Errorf("exec: cannot label non-symbol")
+			}
 			env.bindings[values[0].Value.(string)] = values[1]
 
 			returnValue = nilValue

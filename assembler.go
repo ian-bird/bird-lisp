@@ -218,7 +218,8 @@ func assemble(code []Value, env *Frame) (Value, error) {
 						valueClasses: valueClasses,
 					})
 				case "quote":
-					values, valueClasses := parseArgs(lineValues[1:])
+					values := lineValues[1:]
+					valueClasses := []InstructionValueClass{Const}
 					instructions = append(instructions, Instruction{
 						class:        Literal,
 						values:       values,
