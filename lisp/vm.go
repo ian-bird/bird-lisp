@@ -1,41 +1,44 @@
-package main
+package lisp
 
-import "fmt"
+import (
+	"fmt"
+	lisptype "test/m/lisp_type"
+)
 
-var returnValue Value
+var returnValue lisptype.Value
 
-var stack []StackFrame
+var stack []lisptype.StackFrame
 
-func exec(compiledFunction Value) (Value, error) {
-	instructions := compiledFunction.Cdr.Value.([]Instruction)
+func exec(compiledFunction lisptype.Value) (lisptype.Value, error) {
+	instructions := compiledFunction.Cdr.Value.([]lisptype.Instruction)
 
-	newEnv := func(compiledFunction Value) Frame {
-		return Frame{
-			parent:   compiledFunction.Value.(*Frame),
-			bindings: nil,
+	newEnv := func(compiledFunction lisptype.Value) lisptype.Frame {
+		return lisptype.Frame{
+			Parent:   compiledFunction.Value.(*lisptype.Frame),
+			Bindings: nil,
 		}
 	}
 
-	accessValues := func(i Instruction) []Value {
-		result := make([]Value, len(i.values))
-		for vNum := 0; vNum < len(i.values); vNum++ {
-			valueType := i.valueClasses[vNum]
-			value := i.values[vNum]
+	accessValues := func(i lisptype.Instruction) []lisptype.Value {
+		result := make([]lisptype.Value, len(i.Values))
+		for vNum := 0; vNum < len(i.Values); vNum++ {
+			valueType := i.ValueClasses[vNum]
+			value := i.Values[vNum]
 			switch valueType {
 			// args are loaded onto the stack before calling
-			case Arg:
-				result[vNum] = stack[len(stack)-1].workspace[int(value.Value.(float64))]
-			case Stack:
-				result[vNum] = stack[len(stack)-1].workspace[int(value.Value.(float64))]
-			case Const:
+			case lisptype.Arg:
+				result[vNum] = stack[len(stack)-1].Workspace[int(value.Value.(float64))]
+			case lisptype.Stack:
+				result[vNum] = stack[len(stack)-1].Workspace[int(value.Value.(float64))]
+			case lisptype.Const:
 				result[vNum] = value
-			case ReturnRegister:
+			case lisptype.ReturnRegister:
 				result[vNum] = returnValue
 			default:
-				result[vNum] = Value{
+				result[vNum] = lisptype.Value{
 					Car:   nil,
 					Cdr:   nil,
-					Type:  Nil,
+					Type:  lisptype.Nil,
 					Value: nil,
 				}
 			}
@@ -45,10 +48,10 @@ func exec(compiledFunction Value) (Value, error) {
 
 	env := newEnv(compiledFunction)
 
-	nilValue := Value{
+	nilValue := lisptype.Value{
 		Car:   nil,
 		Cdr:   nil,
-		Type:  Nil,
+		Type:  lisptype.Nil,
 		Value: nil,
 	}
 	instructionPointer := 0
@@ -62,41 +65,41 @@ executionLoop:
 		instruction := instructions[instructionPointer]
 		values := accessValues(instruction)
 
-		switch instruction.class {
-		case Halt:
+		switch instruction.Class {
+		case lisptype.Halt:
 			// exiting this function.
 
 			// if the caller is interpreted,
 			// we have to exit execution so that control passes back to the
 			// caller.
-			if stack[len(stack)-1].callerIsInterpreted {
+			if stack[len(stack)-1].CallerIsInterpreted {
 				stack = stack[:len(stack)-1]
 				break executionLoop
 			}
 
 			// if the stack length is 1 we need to exit as well so the value is returned
 			if len(stack) == 1 {
-				stack = []StackFrame{}
+				stack = []lisptype.StackFrame{}
 				break executionLoop
 			}
 
 			// otherwise, control passes to calling compiled function
-			instructions = stack[len(stack)-1].callerCode
-			instructionPointer = stack[len(stack)-1].returnLine
+			instructions = stack[len(stack)-1].CallerCode
+			instructionPointer = stack[len(stack)-1].ReturnLine
 
-			env = stack[len(stack)-1].callerEnv
+			env = stack[len(stack)-1].CallerEnv
 			stack = stack[:len(stack)-1]
-		case Funcall:
+		case lisptype.Funcall:
 			// this call will use the stack if its a compiled function
 			// first we need to figure out what's going to be ran, though.
 			function := values[0]
 			args := values[1:]
 
-			var evaledArgs []Value
+			var evaledArgs []lisptype.Value
 			for i, arg := range args {
-				if arg.Type == Symbol && instruction.valueClasses[i+1] == Const {
+				if arg.Type == lisptype.Symbol && instruction.ValueClasses[i+1] == lisptype.Const {
 					evaledArg, err := lookup(env, arg)
-					if err != nil || evaledArg.Type != SpecialForm {
+					if err != nil || evaledArg.Type != lisptype.SpecialForm {
 						evaledArgs = append(evaledArgs, arg)
 					} else {
 						evaledArgs = append(evaledArgs, evaledArg)
@@ -106,9 +109,9 @@ executionLoop:
 				}
 			}
 			switch function.Type {
-			case InterpretedFunction, CompiledFunction, SpecialForm:
+			case lisptype.InterpretedFunction, lisptype.CompiledFunction, lisptype.SpecialForm:
 				// do nothing
-			case Symbol:
+			case lisptype.Symbol:
 				toCall, err := lookup(env, function)
 				if err != nil {
 					return nilValue, fmt.Errorf("exec funcall: %v", err)
@@ -119,45 +122,45 @@ executionLoop:
 			}
 
 			switch function.Type {
-			case CompiledFunction:
+			case lisptype.CompiledFunction:
 				// we can't load the code just yet since we need to construct
 				// our continuation first. So create the new workspace
-				newFrame := StackFrame{
-					workspace: func() []Value {
-						result := make([]Value, len(function.Cdr.Value.([]Instruction))/2+1)
-						if function.Cdr.Value.([]Instruction)[0].class == VarArgFlag {
+				newFrame := lisptype.StackFrame{
+					Workspace: func() []lisptype.Value {
+						result := make([]lisptype.Value, len(function.Cdr.Value.([]lisptype.Instruction))/2+1)
+						if function.Cdr.Value.([]lisptype.Instruction)[0].Class == lisptype.VarArgFlag {
 							result[0] = toList(evaledArgs)
 						} else {
 							copy(result, evaledArgs)
 						}
 						return result
 					}(),
-					callerIsInterpreted: false,
-					returnLine:          instructionPointer,
-					callerCode:          instructions,
-					callerEnv:           env,
+					CallerIsInterpreted: false,
+					ReturnLine:          instructionPointer,
+					CallerCode:          instructions,
+					CallerEnv:           env,
 				}
 				instructionPointer = -1
-				instructions = function.Cdr.Value.([]Instruction)
+				instructions = function.Cdr.Value.([]lisptype.Instruction)
 				stack = append(stack, newFrame)
 				env = newEnv(function)
 
-			case InterpretedFunction:
+			case lisptype.InterpretedFunction:
 				var err error
 				returnValue, err = apply(function, evaledArgs)
 				if err != nil {
 					return nilValue, fmt.Errorf("exec: %v", err)
 				}
-			case SpecialForm:
+			case lisptype.SpecialForm:
 				// need to quote the special form so that eval doesnt explode
 				var err error
 
-				quotedValues := make([]Value, 0, len(values))
+				quotedValues := make([]lisptype.Value, 0, len(values))
 				for _, value := range values {
-					quotedValues = append(quotedValues, toList([]Value{{
+					quotedValues = append(quotedValues, toList([]lisptype.Value{{
 						Car:   nil,
 						Cdr:   nil,
-						Type:  Symbol,
+						Type:  lisptype.Symbol,
 						Value: "quote",
 					}, value}))
 				}
@@ -168,16 +171,16 @@ executionLoop:
 			default:
 				return nilValue, fmt.Errorf("exec: invalid funcall")
 			}
-		case Tailcall:
+		case lisptype.Tailcall:
 			// this call will not extend the stack if its a compiled function
 			// first we need to figure out what's going to be ran, though.
 			function := values[0]
 			args := values[1:]
-			var evaledArgs []Value
+			var evaledArgs []lisptype.Value
 			for i, arg := range args {
-				if arg.Type == Symbol {
+				if arg.Type == lisptype.Symbol {
 					evaledArg, err := lookup(env, arg)
-					if err != nil || evaledArg.Type != SpecialForm || instruction.valueClasses[i+1] != Const {
+					if err != nil || evaledArg.Type != lisptype.SpecialForm || instruction.ValueClasses[i+1] != lisptype.Const {
 						evaledArgs = append(evaledArgs, arg)
 					} else {
 						evaledArgs = append(evaledArgs, evaledArg)
@@ -187,9 +190,9 @@ executionLoop:
 				}
 			}
 			switch function.Type {
-			case InterpretedFunction, CompiledFunction, SpecialForm:
+			case lisptype.InterpretedFunction, lisptype.CompiledFunction, lisptype.SpecialForm:
 				// do nothing
-			case Symbol:
+			case lisptype.Symbol:
 				// look up the binding
 				toCall, err := lookup(env, function)
 				if err != nil {
@@ -201,37 +204,37 @@ executionLoop:
 			}
 
 			switch function.Type {
-			case CompiledFunction:
+			case lisptype.CompiledFunction:
 				instructionPointer = -1
-				instructions = function.Cdr.Value.([]Instruction)
+				instructions = function.Cdr.Value.([]lisptype.Instruction)
 				// compiled function can be ran without consuming stack.
 				// return data remains unchanged, but blow away stack variables
-				stackWorkspace := make([]Value, len(instructions)/2+1)
-				if instructions[0].class == VarArgFlag {
+				stackWorkspace := make([]lisptype.Value, len(instructions)/2+1)
+				if instructions[0].Class == lisptype.VarArgFlag {
 					stackWorkspace[0] = toList(evaledArgs)
 				} else {
 					copy(stackWorkspace, evaledArgs)
 				}
-				stack[len(stack)-1].workspace = stackWorkspace
+				stack[len(stack)-1].Workspace = stackWorkspace
 
 				env = newEnv(function)
-			case InterpretedFunction:
+			case lisptype.InterpretedFunction:
 				// can't avoid cost of making a call to an interpreted function
 				var err error
 				returnValue, err = apply(function, evaledArgs)
 				if err != nil {
 					return nilValue, fmt.Errorf("exec: %v", err)
 				}
-			case SpecialForm:
+			case lisptype.SpecialForm:
 				// need to quote the special form so that eval doesnt explode
 				var err error
 
-				quotedValues := make([]Value, 0, len(values))
+				quotedValues := make([]lisptype.Value, 0, len(values))
 				for _, value := range values {
-					quotedValues = append(quotedValues, toList([]Value{{
+					quotedValues = append(quotedValues, toList([]lisptype.Value{{
 						Car:   nil,
 						Cdr:   nil,
-						Type:  Symbol,
+						Type:  lisptype.Symbol,
 						Value: "quote",
 					}, value}))
 				}
@@ -242,110 +245,110 @@ executionLoop:
 			default:
 				return nilValue, fmt.Errorf("exec: invalid funcall")
 			}
-		case Branch:
+		case lisptype.Branch:
 			// if the predicate is not nil or false,
 			// then jump the instruction pointer to the target line
 			predicate := values[0]
-			if predicate.Type != Nil && (predicate.Type != Boolean || predicate.Value.(bool)) {
-				instructionPointer = int(instruction.values[1].Value.(float64)) - 1
+			if predicate.Type != lisptype.Nil && (predicate.Type != lisptype.Boolean || predicate.Value.(bool)) {
+				instructionPointer = int(instruction.Values[1].Value.(float64)) - 1
 				// -1 because its added at the end of processing
 			}
-		case Label:
+		case lisptype.Label:
 			// if bindings are nilled out fix that now that we need it
-			if env.bindings == nil {
-				env.bindings = make(map[string]Value)
+			if env.Bindings == nil {
+				env.Bindings = make(map[string]lisptype.Value)
 			}
 
-			if values[0].Type != Symbol {
+			if values[0].Type != lisptype.Symbol {
 				return nilValue, fmt.Errorf("exec: cannot label non-symbol")
 			}
-			env.bindings[values[0].Value.(string)] = values[1]
+			env.Bindings[values[0].Value.(string)] = values[1]
 
 			returnValue = nilValue
-		case MakeClosure:
+		case lisptype.MakeClosure:
 			function := values[0]
 			environment := values[1]
-			returnValue = Value{
+			returnValue = lisptype.Value{
 				Car:   nil,
 				Cdr:   function.Cdr,
-				Type:  CompiledFunction,
+				Type:  lisptype.CompiledFunction,
 				Value: environment.Value,
 			}
-		case EnvRef:
+		case lisptype.EnvRef:
 			var err error
 			returnValue, err = lookup(env, values[0])
 			if err != nil {
 				return nilValue, fmt.Errorf("exec: failed envref lookup, this should never happen")
 			}
-		case MakeEnv:
+		case lisptype.MakeEnv:
 			// if bindings are nilled out fix that now that we need it
-			if env.bindings == nil {
-				env.bindings = make(map[string]Value)
+			if env.Bindings == nil {
+				env.Bindings = make(map[string]lisptype.Value)
 			}
 
 			i := 0
 			for i < len(values) {
 				// if we get a stack value we need to add it to the env
-				if instruction.valueClasses[i] == Stack {
+				if instruction.ValueClasses[i] == lisptype.Stack {
 					label := values[i+1].Value.(string)
-					env.bindings[label] = values[i]
+					env.Bindings[label] = values[i]
 					i += 2
 				} else {
 					i++
 				}
 			}
 
-			returnValue = Value{
+			returnValue = lisptype.Value{
 				Car:   nil,
 				Cdr:   nil,
-				Type:  Nil,
-				Value: &[]Frame{env}[0], // copy env and get pointer
+				Type:  lisptype.Nil,
+				Value: &[]lisptype.Frame{env}[0], // copy env and get pointer
 			}
-		case Literal:
+		case lisptype.Literal:
 			returnValue = values[0]
-		case Assign:
+		case lisptype.Assign:
 			// load the value into the correct slot in the stack workspace
 			val := values[0]
-			whichSlot := int(instruction.values[1].Value.(float64))
-			stack[len(stack)-1].workspace[whichSlot] = val
-		case Atom:
-			returnValue = Value{
+			whichSlot := int(instruction.Values[1].Value.(float64))
+			stack[len(stack)-1].Workspace[whichSlot] = val
+		case lisptype.Atom:
+			returnValue = lisptype.Value{
 				Car:  nil,
 				Cdr:  nil,
-				Type: Boolean,
+				Type: lisptype.Boolean,
 				Value: func() bool {
-					return values[0].Type != ConsCell
+					return values[0].Type != lisptype.ConsCell
 				}(),
 			}
-		case Car:
+		case lisptype.Car:
 			val := values[0]
-			if val.Type != ConsCell {
+			if val.Type != lisptype.ConsCell {
 				return nilValue, fmt.Errorf("exec: car expected PAIR")
 			}
 			returnValue = *val.Car
-		case Cdr:
+		case lisptype.Cdr:
 			val := values[0]
-			if val.Type != ConsCell {
+			if val.Type != lisptype.ConsCell {
 				return nilValue, fmt.Errorf("exec: cdr expected PAIR")
 			}
 			returnValue = *val.Cdr
-		case Cons:
-			returnValue = Value{
+		case lisptype.Cons:
+			returnValue = lisptype.Value{
 				Car:   &values[0],
 				Cdr:   &values[1],
-				Type:  ConsCell,
+				Type:  lisptype.ConsCell,
 				Value: nil,
 			}
-		case Eq:
-			returnValue = Value{
+		case lisptype.Eq:
+			returnValue = lisptype.Value{
 				Car:  nil,
 				Cdr:  nil,
-				Type: Boolean,
+				Type: lisptype.Boolean,
 				Value: func() bool {
 					return areEqual(values[0], values[1])
 				}(),
 			}
-		case GreaterThan:
+		case lisptype.GreaterThan:
 			maxValue := values[0].Value.(float64)
 			result := true
 			for _, value := range values[1:] {
@@ -353,172 +356,172 @@ executionLoop:
 					result = false
 				}
 			}
-			returnValue = Value{
+			returnValue = lisptype.Value{
 				Car:   nil,
 				Cdr:   nil,
-				Type:  Boolean,
+				Type:  lisptype.Boolean,
 				Value: result,
 			}
-		case Plus:
+		case lisptype.Plus:
 			var result float64
 			for _, value := range values {
 				result += value.Value.(float64)
 			}
-			returnValue = Value{
+			returnValue = lisptype.Value{
 				Car:   nil,
 				Cdr:   nil,
-				Type:  Number,
+				Type:  lisptype.Number,
 				Value: result,
 			}
-		case Minus:
+		case lisptype.Minus:
 			result := values[0].Value.(float64)
 			for _, value := range values[1:] {
 				result -= value.Value.(float64)
 			}
-			returnValue = Value{
+			returnValue = lisptype.Value{
 				Car:   nil,
 				Cdr:   nil,
-				Type:  Number,
+				Type:  lisptype.Number,
 				Value: result,
 			}
-		case Times:
+		case lisptype.Times:
 			result := values[0].Value.(float64)
 			for _, value := range values[1:] {
 				result *= value.Value.(float64)
 			}
-			returnValue = Value{
+			returnValue = lisptype.Value{
 				Car:   nil,
 				Cdr:   nil,
-				Type:  Number,
+				Type:  lisptype.Number,
 				Value: result,
 			}
-		case Div:
+		case lisptype.Div:
 			result := values[0].Value.(float64)
 			for _, value := range values[1:] {
 				result /= value.Value.(float64)
 			}
-			returnValue = Value{
+			returnValue = lisptype.Value{
 				Car:   nil,
 				Cdr:   nil,
-				Type:  Number,
+				Type:  lisptype.Number,
 				Value: result,
 			}
-		case Mod:
+		case lisptype.Mod:
 			var result float64
 			for _, value := range values {
 				result = result - float64(int(result/value.Value.(float64)))*value.Value.(float64)
 			}
-			returnValue = Value{
+			returnValue = lisptype.Value{
 				Car:   nil,
 				Cdr:   nil,
-				Type:  Number,
+				Type:  lisptype.Number,
 				Value: result,
 			}
-		case Gensym:
-			returnValue = Value{
+		case lisptype.Gensym:
+			returnValue = lisptype.Value{
 				Car:   nil,
 				Cdr:   nil,
-				Type:  Symbol,
+				Type:  lisptype.Symbol,
 				Value: fmt.Sprintf("G#%v", gensymCounter),
 			}
 			gensymCounter++
-		case Set:
+		case lisptype.Set:
 			toBind := values[0].Value.(string)
-			for currentFrame := &env; currentFrame != nil; currentFrame = currentFrame.parent {
-				_, inFrame := currentFrame.bindings[toBind]
+			for currentFrame := &env; currentFrame != nil; currentFrame = currentFrame.Parent {
+				_, inFrame := currentFrame.Bindings[toBind]
 				if inFrame {
-					currentFrame.bindings[toBind] = values[1]
+					currentFrame.Bindings[toBind] = values[1]
 					break
 				}
 			}
 			returnValue = nilValue
-		case Type:
+		case lisptype.Type:
 			switch values[0].Type {
-			case Nil:
-				returnValue = Value{
+			case lisptype.Nil:
+				returnValue = lisptype.Value{
 					Car:   nil,
 					Cdr:   nil,
-					Type:  Symbol,
+					Type:  lisptype.Symbol,
 					Value: "nil",
 				}
-			case String:
-				returnValue = Value{
+			case lisptype.String:
+				returnValue = lisptype.Value{
 					Car:   nil,
 					Cdr:   nil,
-					Type:  Symbol,
+					Type:  lisptype.Symbol,
 					Value: "string",
 				}
-			case Number:
-				returnValue = Value{
+			case lisptype.Number:
+				returnValue = lisptype.Value{
 					Car:   nil,
 					Cdr:   nil,
-					Type:  Symbol,
+					Type:  lisptype.Symbol,
 					Value: "number",
 				}
-			case Symbol:
-				returnValue = Value{
+			case lisptype.Symbol:
+				returnValue = lisptype.Value{
 					Car:   nil,
 					Cdr:   nil,
-					Type:  Symbol,
+					Type:  lisptype.Symbol,
 					Value: "symbol",
 				}
-			case Boolean:
-				returnValue = Value{
+			case lisptype.Boolean:
+				returnValue = lisptype.Value{
 					Car:   nil,
 					Cdr:   nil,
-					Type:  Symbol,
+					Type:  lisptype.Symbol,
 					Value: "boolean",
 				}
-			case InterpretedFunction:
-				returnValue = Value{
+			case lisptype.InterpretedFunction:
+				returnValue = lisptype.Value{
 					Car:   nil,
 					Cdr:   nil,
-					Type:  Symbol,
+					Type:  lisptype.Symbol,
 					Value: "interpretedfunction",
 				}
-			case CompiledFunction:
-				returnValue = Value{
+			case lisptype.CompiledFunction:
+				returnValue = lisptype.Value{
 					Car:   nil,
 					Cdr:   nil,
-					Type:  Symbol,
+					Type:  lisptype.Symbol,
 					Value: "compiledfunction",
 				}
-			case Macro:
-				returnValue = Value{
+			case lisptype.Macro:
+				returnValue = lisptype.Value{
 					Car:   nil,
 					Cdr:   nil,
-					Type:  Symbol,
+					Type:  lisptype.Symbol,
 					Value: "macro",
 				}
-			case SpecialForm:
-				returnValue = Value{
+			case lisptype.SpecialForm:
+				returnValue = lisptype.Value{
 					Car:   nil,
 					Cdr:   nil,
-					Type:  Symbol,
+					Type:  lisptype.Symbol,
 					Value: "specialform",
 				}
-			case ConsCell:
-				returnValue = Value{
+			case lisptype.ConsCell:
+				returnValue = lisptype.Value{
 					Car:   nil,
 					Cdr:   nil,
-					Type:  Symbol,
+					Type:  lisptype.Symbol,
 					Value: "conscell",
 				}
 			default:
 				returnValue = nilValue
 			}
-		case Macroexpand:
-			cell := []Value{{
+		case lisptype.Macroexpand:
+			cell := []lisptype.Value{{
 				Car:   nil,
 				Cdr:   nil,
-				Type:  Symbol,
+				Type:  lisptype.Symbol,
 				Value: "macroexpand-1",
 			}, toList(values)}
 			// make this an interpreted call
-			result, err := Eval(Value{
+			result, err := Eval(lisptype.Value{
 				Car:   &cell[0],
 				Cdr:   &cell[1],
-				Type:  ConsCell,
+				Type:  lisptype.ConsCell,
 				Value: nil,
 			}, &env)
 
@@ -527,17 +530,17 @@ executionLoop:
 			}
 
 			returnValue = result
-		case Bound:
+		case lisptype.Bound:
 			_, lookupError := lookup(env, values[0])
-			returnValue = Value{
+			returnValue = lisptype.Value{
 				Car:   nil,
 				Cdr:   nil,
-				Type:  Boolean,
+				Type:  lisptype.Boolean,
 				Value: lookupError == nil,
 			}
-		case VarArgFlag:
+		case lisptype.VarArgFlag:
 			returnValue = nilValue
-		case Assemble:
+		case lisptype.Assemble:
 			var err error
 			returnValue, err = assemble(toArray(values[0]), &env)
 			if err != nil {

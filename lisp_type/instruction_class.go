@@ -1,4 +1,4 @@
-package main
+package lisptype
 
 type InstructionClass int
 

@@ -1,25 +1,26 @@
-package main
+package lisp
 
 import (
 	"bufio"
 	"fmt"
 	"os"
+	lisptype "test/m/lisp_type"
 )
 
 // creates a new top level frame with default
 // bindings for special forms
-func NewTopLevelFrame() Frame {
-	newSpecialForm := func(s string) Value {
-		return Value{
+func NewTopLevelFrame() lisptype.Frame {
+	newSpecialForm := func(s string) lisptype.Value {
+		return lisptype.Value{
 			Car:   nil,
 			Cdr:   nil,
-			Type:  SpecialForm,
+			Type:  lisptype.SpecialForm,
 			Value: s,
 		}
 	}
-	return Frame{
-		parent: nil,
-		bindings: map[string]Value{
+	return lisptype.Frame{
+		Parent: nil,
+		Bindings: map[string]lisptype.Value{
 			"atom?":         newSpecialForm("atom?"),         // returns true if argument is an atom (i.e. not a cons)
 			"car":           newSpecialForm("car"),           // returns the first element of a cons cell
 			"cdr":           newSpecialForm("cdr"),           // returns the second element of a cons cell
@@ -46,7 +47,7 @@ func NewTopLevelFrame() Frame {
 	}
 }
 
-func LoadFile(fileName string, frame Frame) (Frame, error) {
+func LoadFile(fileName string, frame lisptype.Frame) (lisptype.Frame, error) {
 	bytes, err := os.ReadFile(fileName)
 	loadedFrame := &frame
 
@@ -55,7 +56,7 @@ func LoadFile(fileName string, frame Frame) (Frame, error) {
 	}
 	body := string(bytes[:])
 	for body != "" {
-		var parsedExpression Value
+		var parsedExpression lisptype.Value
 		var err error
 		body, parsedExpression, err = Read(body)
 		if err != nil {
@@ -69,7 +70,7 @@ func LoadFile(fileName string, frame Frame) (Frame, error) {
 	return *loadedFrame, nil
 }
 
-func Repl(frame *Frame) {
+func Repl(frame *lisptype.Frame) {
 	fmt.Printf("Lisp interactive session\n")
 	scanner := bufio.NewScanner(os.Stdin)
 	for {
@@ -78,14 +79,14 @@ func Repl(frame *Frame) {
 		scanner.Scan()
 		userInput = scanner.Text()
 		for userInput != "" {
-			var parsedExpression Value
+			var parsedExpression lisptype.Value
 			var err error
 			userInput, parsedExpression, err = Read(userInput)
 			if err != nil {
 				fmt.Printf("%v", err)
 				continue
 			}
-			var output Value
+			var output lisptype.Value
 			output, err = Eval(parsedExpression, frame)
 			if err != nil {
 				fmt.Printf("%v", err)
@@ -94,21 +95,4 @@ func Repl(frame *Frame) {
 			fmt.Printf("%v", Print(output))
 		}
 	}
-}
-
-func main() {
-	frame := NewTopLevelFrame()
-	frame, loadErr := LoadFile("stdlib.lisp", frame)
-	if loadErr != nil {
-		fmt.Printf("error loading file: %v", loadErr)
-		return
-	}
-
-	frame, loadErr = LoadFile("compiled-lib.lisp", frame)
-	if loadErr != nil {
-		fmt.Printf("error loading file: %v", loadErr)
-		return
-	}
-
-	Repl(&frame)
 }

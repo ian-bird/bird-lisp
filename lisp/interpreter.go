@@ -1,7 +1,8 @@
-package main
+package lisp
 
 import (
 	"fmt"
+	lisptype "test/m/lisp_type"
 )
 
 // this is a global counter used to prevent gensym collisions
@@ -9,8 +10,8 @@ var gensymCounter = 0
 
 // converta a list of values (car points to element, cdr to tail)
 // into an array of elements
-func toArray(value Value) []Value {
-	result := make([]Value, 0)
+func toArray(value lisptype.Value) []lisptype.Value {
+	result := make([]lisptype.Value, 0)
 	for value.Cdr != nil {
 		result = append(result, *value.Car)
 		value = *value.Cdr
@@ -19,28 +20,28 @@ func toArray(value Value) []Value {
 }
 
 // converts an array of values into a list (car points to element, cdr to tail)
-func toList(values []Value) Value {
+func toList(values []lisptype.Value) lisptype.Value {
 	if len(values) == 0 {
-		return Value{
+		return lisptype.Value{
 			Car:   nil,
 			Cdr:   nil,
-			Type:  Nil,
+			Type:  lisptype.Nil,
 			Value: nil,
 		}
 	} else {
-		return Value{
+		return lisptype.Value{
 			Car:   &values[0],
-			Cdr:   &[]Value{toList(values[1:])}[0],
-			Type:  ConsCell,
+			Cdr:   &[]lisptype.Value{toList(values[1:])}[0],
+			Type:  lisptype.ConsCell,
 			Value: nil,
 		}
 	}
 }
 
 // returns true if 2 values are equal, checks recursively
-func areEqual(a, b Value) bool {
-	aTodo := []Value{a}
-	bTodo := []Value{b}
+func areEqual(a, b lisptype.Value) bool {
+	aTodo := []lisptype.Value{a}
+	bTodo := []lisptype.Value{b}
 
 	for len(aTodo) > 0 {
 		a := aTodo[0]
@@ -48,10 +49,10 @@ func areEqual(a, b Value) bool {
 		if a.Type != b.Type {
 			return false
 		}
-		if a.Type != ConsCell && a.Value != b.Value {
+		if a.Type != lisptype.ConsCell && a.Value != b.Value {
 			return false
 		}
-		if a.Type == ConsCell {
+		if a.Type == lisptype.ConsCell {
 			aTodo = append(aTodo, *a.Car, *a.Cdr)
 			bTodo = append(bTodo, *b.Car, *b.Cdr)
 		}
@@ -63,19 +64,19 @@ func areEqual(a, b Value) bool {
 
 // returns all the current bindings for the frame tower provided,
 // i.e. all the bound symbols and the values they'll return if looked up
-func getBindings(frame Frame) map[string]Value {
-	bindings := make(map[string]Value)
-	if frame.parent != nil {
-		bindings = getBindings(*frame.parent)
+func getBindings(frame lisptype.Frame) map[string]lisptype.Value {
+	bindings := make(map[string]lisptype.Value)
+	if frame.Parent != nil {
+		bindings = getBindings(*frame.Parent)
 	}
-	for k, v := range frame.bindings {
+	for k, v := range frame.Bindings {
 		bindings[k] = v
 	}
 	return bindings
 }
 
 // converts all the current bindings into a plain text representation
-func printFrame(frame Frame) string {
+func printFrame(frame lisptype.Frame) string {
 	bindings := getBindings(frame)
 	result := ""
 	for k, v := range bindings {
@@ -86,47 +87,47 @@ func printFrame(frame Frame) string {
 
 // applies a function or a macro
 // argument evaluation will have already occured
-func apply(fn Value, args []Value) (Value, error) {
-	nilValue := Value{
+func apply(fn lisptype.Value, args []lisptype.Value) (lisptype.Value, error) {
+	nilValue := lisptype.Value{
 		Car:   nil,
 		Cdr:   nil,
-		Type:  Nil,
+		Type:  lisptype.Nil,
 		Value: nil,
 	}
 	fnStatements := toArray(fn)
 	params := fnStatements[0]
 
-	argFrame := Frame{
-		bindings: make(map[string]Value, 0),
+	argFrame := lisptype.Frame{
+		Bindings: make(map[string]lisptype.Value, 0),
 		// bindings is a map, maps are references,
 		// parent is a pointer so it'll point to the same record
 		// so copying is ok here
-		parent: fn.Value.(*Frame),
+		Parent: fn.Value.(*lisptype.Frame),
 	}
-	defer func() { fn.Value = argFrame.parent }()
+	defer func() { fn.Value = argFrame.Parent }()
 
 	// create a new frame by binding the arguments passed in
 	// to the parameters stored in the literal that we're applying
 	// this is going to be the base level frame, i.e. its bindings will be checked
 	// before lexical and dynamic variables.
-	if params.Type == ConsCell {
+	if params.Type == lisptype.ConsCell {
 		paramsList := toArray(params)
 		if len(paramsList) != len(args) {
 			return nilValue, fmt.Errorf("apply %v: wrong number of arguments passed", fn)
 		}
 		for i := range paramsList {
-			argFrame.bindings[paramsList[i].Value.(string)] = args[i]
+			argFrame.Bindings[paramsList[i].Value.(string)] = args[i]
 		}
-	} else if params.Type == Nil {
+	} else if params.Type == lisptype.Nil {
 		if len(args) != 0 {
 			return nilValue, fmt.Errorf("apply %v: wrong number of arguments passed", fn)
 		}
 	} else {
-		argFrame.bindings[params.Value.(string)] = toList(args)
+		argFrame.Bindings[params.Value.(string)] = toList(args)
 	}
 
 	// we only return the result of the last expression in the lambda / macro
-	var result Value
+	var result lisptype.Value
 	for _, toEvaluate := range fnStatements[1:] {
 		var err error
 		result, err = Eval(toEvaluate, &argFrame)
@@ -138,39 +139,39 @@ func apply(fn Value, args []Value) (Value, error) {
 }
 
 // looks up the binding definition for a symbol
-func lookup(frame Frame, value Value) (Value, error) {
-	nilValue := Value{
+func lookup(frame lisptype.Frame, value lisptype.Value) (lisptype.Value, error) {
+	nilValue := lisptype.Value{
 		Car:   nil,
 		Cdr:   nil,
-		Type:  Nil,
+		Type:  lisptype.Nil,
 		Value: nil,
 	}
 
-	if value.Type != Symbol {
+	if value.Type != lisptype.Symbol {
 		return nilValue, fmt.Errorf("lookup: cannot look up value for non-symbol '%v'", value)
 	}
 
-	v, ok := frame.bindings[value.Value.(string)]
+	v, ok := frame.Bindings[value.Value.(string)]
 
 	// if no definition found in this frame,
 	// check the ones above it
 	if !ok {
-		if frame.parent == nil {
+		if frame.Parent == nil {
 			return nilValue, fmt.Errorf("lookup: no binding found for symbol '%v'", value)
 		}
-		return lookup(*frame.parent, value)
+		return lookup(*frame.Parent, value)
 	}
 
 	return v, nil
 }
 
 // evaluates an s-expression and returns its result
-func Eval(toEvaluate Value, frame *Frame) (Value, error) {
+func Eval(toEvaluate lisptype.Value, frame *lisptype.Frame) (lisptype.Value, error) {
 	// define some commonly used variables / patterns in the body
-	nilValue := Value{
+	nilValue := lisptype.Value{
 		Car:   nil,
 		Cdr:   nil,
-		Type:  Nil,
+		Type:  lisptype.Nil,
 		Value: nil,
 	}
 	passUpError := func(err error) error {
@@ -186,29 +187,29 @@ func Eval(toEvaluate Value, frame *Frame) (Value, error) {
 		// how we evaluate is based on the type
 		switch toEvaluate.Type {
 		// strings, numbers, booleans, nil, macro literal and function literal are self-evaluating
-		case String:
+		case lisptype.String:
 			return toEvaluate, nil
-		case Number:
+		case lisptype.Number:
 			return toEvaluate, nil
-		case Boolean:
+		case lisptype.Boolean:
 			return toEvaluate, nil
 		// symbols evaluate to their binding. An error is generated if trying to evaluate an unbound symbol
-		case Symbol:
+		case lisptype.Symbol:
 			lookedUpVal, err := lookup(*frame, toEvaluate)
 			if err != nil {
 				return nilValue, passUpError(err)
 			}
 			return lookedUpVal, nil
-		case Nil:
+		case lisptype.Nil:
 			return nilValue, nil
-		case InterpretedFunction:
+		case lisptype.InterpretedFunction:
 			return toEvaluate, nil
-		case Macro:
+		case lisptype.Macro:
 			return toEvaluate, nil
 		// cons cells represent function calls or special forms and need to be evaluated differently
-		case ConsCell:
+		case lisptype.ConsCell:
 			listElements := toArray(toEvaluate)
-			var firstThing Value
+			var firstThing lisptype.Value
 			var err error
 			firstThing, err = Eval(listElements[0], frame)
 			arguments := listElements[1:]
@@ -219,7 +220,7 @@ func Eval(toEvaluate Value, frame *Frame) (Value, error) {
 			// the first thing determines how to evaluate the rest of the list
 			switch firstThing.Type {
 			// if its a special form, then we need to follow specific rules depending on the form
-			case SpecialForm:
+			case lisptype.SpecialForm:
 				switch firstThing.Value.(string) {
 				// checks if the argument is an atom (i.e., not a list)
 				// evaluates arguments
@@ -227,17 +228,17 @@ func Eval(toEvaluate Value, frame *Frame) (Value, error) {
 					if len(arguments) != 1 {
 						return nilValue, newError("wrong number of arguments passed to atom?")
 					}
-					var evaluatedArg Value
+					var evaluatedArg lisptype.Value
 					evaluatedArg, err = Eval(arguments[0], frame)
 					if err != nil {
 						return nilValue, passUpError(err)
 					}
-					return Value{
+					return lisptype.Value{
 						Car:  nil,
 						Cdr:  nil,
-						Type: Boolean,
+						Type: lisptype.Boolean,
 						Value: func() bool {
-							return evaluatedArg.Type != ConsCell
+							return evaluatedArg.Type != lisptype.ConsCell
 						}(),
 					}, nil
 				// get the first element of a cons cell and check for type validity
@@ -246,12 +247,12 @@ func Eval(toEvaluate Value, frame *Frame) (Value, error) {
 					if len(arguments) != 1 {
 						return nilValue, newError("eval: wrong number of arguments passed to car")
 					}
-					var evaluatedArg Value
+					var evaluatedArg lisptype.Value
 					evaluatedArg, err = Eval(arguments[0], frame)
 					if err != nil {
 						return nilValue, passUpError(err)
 					}
-					if evaluatedArg.Type != ConsCell {
+					if evaluatedArg.Type != lisptype.ConsCell {
 						return nilValue, newError("car expected PAIR")
 					}
 					return *evaluatedArg.Car, nil
@@ -261,12 +262,12 @@ func Eval(toEvaluate Value, frame *Frame) (Value, error) {
 					if len(arguments) != 1 {
 						return nilValue, newError("wrong number of arguments passed to cdr")
 					}
-					var evaluatedArg Value
+					var evaluatedArg lisptype.Value
 					evaluatedArg, err = Eval(arguments[0], frame)
 					if err != nil {
 						return nilValue, passUpError(err)
 					}
-					if evaluatedArg.Type != ConsCell {
+					if evaluatedArg.Type != lisptype.ConsCell {
 						return nilValue, newError("cdr expected PAIR")
 					}
 					return *evaluatedArg.Cdr, nil
@@ -279,11 +280,11 @@ func Eval(toEvaluate Value, frame *Frame) (Value, error) {
 					}
 					for i, currentBranch := range arguments {
 						branchList := toArray(currentBranch)
-						if branchList[0].Type == Symbol && branchList[0].Value == "else" {
+						if branchList[0].Type == lisptype.Symbol && branchList[0].Value == "else" {
 							if i+1 != len(arguments) {
 								return nilValue, newError("else clause must be last in cond statement")
 							}
-							var result Value
+							var result lisptype.Value
 							for _, toEvaluate := range branchList[1:] {
 								result, err = Eval(toEvaluate, frame)
 								if err != nil {
@@ -292,14 +293,14 @@ func Eval(toEvaluate Value, frame *Frame) (Value, error) {
 							}
 							return result, nil
 						}
-						var predicate Value
+						var predicate lisptype.Value
 						predicate, err = Eval(branchList[0], frame)
 						if err != nil {
 							return nilValue, passUpError(err)
 						}
-						if (predicate.Type == Boolean && predicate.Value.(bool)) ||
-							(predicate.Type != Boolean && predicate.Type != Nil) {
-							var result Value
+						if (predicate.Type == lisptype.Boolean && predicate.Value.(bool)) ||
+							(predicate.Type != lisptype.Boolean && predicate.Type != lisptype.Nil) {
+							var result lisptype.Value
 							for _, toEvaluate := range branchList[1:] {
 								result, err = Eval(toEvaluate, frame)
 								if err != nil {
@@ -315,19 +316,19 @@ func Eval(toEvaluate Value, frame *Frame) (Value, error) {
 					if len(arguments) != 2 {
 						return nilValue, newError("wrong number of arguments passed to cons")
 					}
-					evaluatedArgs := make([]Value, 0)
+					evaluatedArgs := make([]lisptype.Value, 0)
 					for _, arg := range arguments {
-						var evaluatedArg Value
+						var evaluatedArg lisptype.Value
 						evaluatedArg, err = Eval(arg, frame)
 						if err != nil {
 							return nilValue, passUpError(err)
 						}
 						evaluatedArgs = append(evaluatedArgs, evaluatedArg)
 					}
-					return Value{
+					return lisptype.Value{
 						Car:   &evaluatedArgs[0],
 						Cdr:   &evaluatedArgs[1],
-						Type:  ConsCell,
+						Type:  lisptype.ConsCell,
 						Value: nil,
 					}, nil
 				// check if 2 elements are structurally equal, evaluates arguments
@@ -335,19 +336,19 @@ func Eval(toEvaluate Value, frame *Frame) (Value, error) {
 					if len(arguments) != 2 {
 						return nilValue, newError("wrong number of arguments passed to eq?")
 					}
-					evaluatedArgs := make([]Value, 0)
+					evaluatedArgs := make([]lisptype.Value, 0)
 					for _, arg := range arguments {
-						var evaluatedArg Value
+						var evaluatedArg lisptype.Value
 						evaluatedArg, err = Eval(arg, frame)
 						if err != nil {
 							return nilValue, passUpError(err)
 						}
 						evaluatedArgs = append(evaluatedArgs, evaluatedArg)
 					}
-					return Value{
+					return lisptype.Value{
 						Car:  nil,
 						Cdr:  nil,
-						Type: Boolean,
+						Type: lisptype.Boolean,
 						Value: func() bool {
 							return areEqual(evaluatedArgs[0], evaluatedArgs[1])
 						}(),
@@ -357,25 +358,25 @@ func Eval(toEvaluate Value, frame *Frame) (Value, error) {
 					if len(arguments) != 2 {
 						return nilValue, newError("wrong number of arguments passed to label")
 					}
-					if arguments[0].Type != Symbol {
+					if arguments[0].Type != lisptype.Symbol {
 						return nilValue, newError("label expected identifier")
 					}
-					var toBind Value
+					var toBind lisptype.Value
 					toBind, err = Eval(arguments[1], frame)
 					if err != nil {
 						return nilValue, err
 					}
-					frame.bindings[arguments[0].Value.(string)] = toBind
+					frame.Bindings[arguments[0].Value.(string)] = toBind
 					return nilValue, nil
 				// creates a new function, does not evaluate arguments
 				case "lambda":
 					if len(arguments) < 2 {
 						return nilValue, newError("lambda is ill-formed")
 					}
-					return Value{
+					return lisptype.Value{
 						Car:   toEvaluate.Cdr.Car, // store arguments
 						Cdr:   toEvaluate.Cdr.Cdr, // store body
-						Type:  InterpretedFunction,
+						Type:  lisptype.InterpretedFunction,
 						Value: frame, // store lexical bindings
 					}, nil
 				// creates a new macro, does not evaluate arguments
@@ -383,10 +384,10 @@ func Eval(toEvaluate Value, frame *Frame) (Value, error) {
 					if len(arguments) < 2 {
 						return nilValue, newError("macro is ill-formed")
 					}
-					return Value{
+					return lisptype.Value{
 						Car:   toEvaluate.Cdr.Car, // store arguments
 						Cdr:   toEvaluate.Cdr.Cdr, // store body
-						Type:  Macro,
+						Type:  lisptype.Macro,
 						Value: frame, // store lexical bindings
 					}, nil
 				// returns its argument without evaluating it
@@ -400,15 +401,15 @@ func Eval(toEvaluate Value, frame *Frame) (Value, error) {
 					if len(arguments) < 2 {
 						return nilValue, newError("wrong number of arguments passed to arithmetic operator")
 					}
-					evaluatedArguments := make([]Value, 0)
+					evaluatedArguments := make([]lisptype.Value, 0)
 					for _, arg := range arguments {
-						var evaluatedArg Value
+						var evaluatedArg lisptype.Value
 						evaluatedArg, err = Eval(arg, frame)
 						if err != nil {
 							return nilValue, passUpError(err)
 						}
 						evaluatedArguments = append(evaluatedArguments, evaluatedArg)
-						if evaluatedArguments[len(evaluatedArguments)-1].Type != Number {
+						if evaluatedArguments[len(evaluatedArguments)-1].Type != lisptype.Number {
 							return nilValue, newError("cannot use non-numeric values for arithmetic")
 						}
 					}
@@ -428,10 +429,10 @@ func Eval(toEvaluate Value, frame *Frame) (Value, error) {
 							lValue = lValue - float64(int(lValue/rNum))*rNum
 						}
 					}
-					return Value{
+					return lisptype.Value{
 						Car:   nil,
 						Cdr:   nil,
-						Type:  Number,
+						Type:  lisptype.Number,
 						Value: lValue,
 					}, nil
 				// comparison operator, evaluates arguments, checks types, returns boolean
@@ -439,15 +440,15 @@ func Eval(toEvaluate Value, frame *Frame) (Value, error) {
 					if len(arguments) < 2 {
 						return nilValue, newError("wrong number of arguments passed to >")
 					}
-					evaluatedArguments := make([]Value, 0)
+					evaluatedArguments := make([]lisptype.Value, 0)
 					for _, arg := range arguments {
-						var evaluatedArg Value
+						var evaluatedArg lisptype.Value
 						evaluatedArg, err = Eval(arg, frame)
 						if err != nil {
 							return nilValue, passUpError(err)
 						}
 						evaluatedArguments = append(evaluatedArguments, evaluatedArg)
-						if evaluatedArguments[len(evaluatedArguments)-1].Type != Number {
+						if evaluatedArguments[len(evaluatedArguments)-1].Type != lisptype.Number {
 							return nilValue, newError("cannot use non-numeric values for >")
 						}
 					}
@@ -457,10 +458,10 @@ func Eval(toEvaluate Value, frame *Frame) (Value, error) {
 							allGood = false
 						}
 					}
-					return Value{
+					return lisptype.Value{
 						Car:   nil,
 						Cdr:   nil,
-						Type:  Boolean,
+						Type:  lisptype.Boolean,
 						Value: allGood,
 					}, nil
 				// evaluates to a unique symbol, takes no arguments
@@ -468,10 +469,10 @@ func Eval(toEvaluate Value, frame *Frame) (Value, error) {
 					if len(arguments) != 0 {
 						return nilValue, newError("wrong number of args passed to gensym")
 					}
-					result := Value{
+					result := lisptype.Value{
 						Car:   nil,
 						Cdr:   nil,
-						Type:  Symbol,
+						Type:  lisptype.Symbol,
 						Value: fmt.Sprintf("G#%v", gensymCounter),
 					}
 					gensymCounter++
@@ -491,14 +492,14 @@ func Eval(toEvaluate Value, frame *Frame) (Value, error) {
 					if err != nil {
 						return nilValue, passUpError(err)
 					}
-					if toBindSymbol.Type != Symbol {
+					if toBindSymbol.Type != lisptype.Symbol {
 						return nilValue, newError("identifier expected")
 					}
 					toBind := toBindSymbol.Value.(string)
-					for currentFrame := frame; currentFrame != nil; currentFrame = currentFrame.parent {
-						_, inFrame := currentFrame.bindings[toBind]
+					for currentFrame := frame; currentFrame != nil; currentFrame = currentFrame.Parent {
+						_, inFrame := currentFrame.Bindings[toBind]
 						if inFrame {
-							currentFrame.bindings[toBind] = newValue
+							currentFrame.Bindings[toBind] = newValue
 							return nilValue, nil
 						}
 					}
@@ -512,74 +513,74 @@ func Eval(toEvaluate Value, frame *Frame) (Value, error) {
 						return nilValue, passUpError(err)
 					}
 					switch evaledArg.Type {
-					case Nil:
-						return Value{
+					case lisptype.Nil:
+						return lisptype.Value{
 							Car:   nil,
 							Cdr:   nil,
-							Type:  Symbol,
+							Type:  lisptype.Symbol,
 							Value: "nil",
 						}, nil
-					case String:
-						return Value{
+					case lisptype.String:
+						return lisptype.Value{
 							Car:   nil,
 							Cdr:   nil,
-							Type:  Symbol,
+							Type:  lisptype.Symbol,
 							Value: "string",
 						}, nil
-					case Number:
-						return Value{
+					case lisptype.Number:
+						return lisptype.Value{
 							Car:   nil,
 							Cdr:   nil,
-							Type:  Symbol,
+							Type:  lisptype.Symbol,
 							Value: "number",
 						}, nil
-					case Symbol:
-						return Value{
+					case lisptype.Symbol:
+						return lisptype.Value{
 							Car:   nil,
 							Cdr:   nil,
-							Type:  Symbol,
+							Type:  lisptype.Symbol,
 							Value: "symbol",
 						}, nil
-					case Boolean:
-						return Value{
+					case lisptype.Boolean:
+						return lisptype.Value{
 							Car:   nil,
 							Cdr:   nil,
-							Type:  Symbol,
+							Type:  lisptype.Symbol,
 							Value: "boolean",
 						}, nil
-					case InterpretedFunction:
-						return Value{
+					case lisptype.InterpretedFunction:
+						return lisptype.Value{
 							Car:   nil,
 							Cdr:   nil,
-							Type:  Symbol,
+							Type:  lisptype.Symbol,
 							Value: "interpretedfunction",
 						}, nil
-					case CompiledFunction:
-						return Value{
+					case lisptype.CompiledFunction:
+						return lisptype.Value{
 							Car:   nil,
 							Cdr:   nil,
-							Type:  Symbol,
+							Type:  lisptype.Symbol,
 							Value: "compiledfunction",
 						}, nil
-					case Macro:
-						return Value{
+					case lisptype.Macro:
+						return lisptype.Value{
 							Car:   nil,
 							Cdr:   nil,
-							Type:  Symbol,
+							Type:  lisptype.Symbol,
 							Value: "macro",
 						}, nil
-					case SpecialForm:
-						return Value{
+					case lisptype.SpecialForm:
+						return lisptype.Value{
 							Car:   nil,
 							Cdr:   nil,
-							Type:  Symbol,
+							Type:  lisptype.Symbol,
 							Value: "specialform",
 						}, nil
-					case ConsCell:
-						return Value{
+					case lisptype.ConsCell:
+						return lisptype.Value{
 							Car:   nil,
 							Cdr:   nil,
-							Type:  Symbol,
+							Type:  lisptype.Symbol,
 							Value: "conscell",
 						}, nil
 					default:
@@ -590,19 +591,19 @@ func Eval(toEvaluate Value, frame *Frame) (Value, error) {
 					if len(arguments) != 1 {
 						return nilValue, newError("wrong number of arguments passed to macroexpand-1")
 					}
-					var evaluatedArg Value
+					var evaluatedArg lisptype.Value
 					evaluatedArg, err = Eval(arguments[0], frame)
 					if err != nil {
 						return nilValue, passUpError(err)
 					}
-					if evaluatedArg.Type != ConsCell {
+					if evaluatedArg.Type != lisptype.ConsCell {
 						return nilValue, newError("argument to macroexpand-1 must be macro call")
 					}
 					macro, err := Eval(*evaluatedArg.Car, frame)
 					if err != nil {
 						return nilValue, passUpError(err)
 					}
-					if macro.Type != Macro {
+					if macro.Type != lisptype.Macro {
 						return nilValue, newError("argument to macroexpand-1 must be macro call")
 					}
 					macroArgs := toArray(*evaluatedArg.Cdr)
@@ -615,27 +616,27 @@ func Eval(toEvaluate Value, frame *Frame) (Value, error) {
 					if len(arguments) != 1 {
 						return nilValue, newError("wrong number of arguments passed to bound?")
 					}
-					var evaluatedArg Value
+					var evaluatedArg lisptype.Value
 					evaluatedArg, err = Eval(arguments[0], frame)
 					if err != nil {
 						return nilValue, passUpError(err)
 					}
-					if evaluatedArg.Type != Symbol {
+					if evaluatedArg.Type != lisptype.Symbol {
 						return nilValue, newError("argument to bound? must be symbol")
 					}
 					_, found := lookup(*frame, evaluatedArg)
 					if found != nil {
-						return Value{
+						return lisptype.Value{
 							Car:   nil,
 							Cdr:   nil,
-							Type:  Boolean,
+							Type:  lisptype.Boolean,
 							Value: false,
 						}, nil
 					}
-					return Value{
+					return lisptype.Value{
 						Car:   nil,
 						Cdr:   nil,
-						Type:  Boolean,
+						Type:  lisptype.Boolean,
 						Value: true,
 					}, nil
 
@@ -643,7 +644,7 @@ func Eval(toEvaluate Value, frame *Frame) (Value, error) {
 					if len(arguments) != 1 {
 						return nilValue, newError("wrong number of arguments passed to assemble")
 					}
-					var evaluatedArg Value
+					var evaluatedArg lisptype.Value
 					evaluatedArg, err = Eval(arguments[0], frame)
 					if err != nil {
 						return nilValue, passUpError(err)
@@ -657,7 +658,7 @@ func Eval(toEvaluate Value, frame *Frame) (Value, error) {
 			// if the first argument in the list is a macro,
 			// then pass the arguments un-evaluated to the macro body,
 			// and then evaluate the output of the macro in the current frame
-			case Macro:
+			case lisptype.Macro:
 				applyResult, err := apply(firstThing, arguments)
 				if err != nil {
 					return nilValue, passUpError(err)
@@ -667,10 +668,10 @@ func Eval(toEvaluate Value, frame *Frame) (Value, error) {
 			// if the first argument in the list is a function,
 			// then pass the evaluated arguments to the function body,
 			// and return the function output
-			case InterpretedFunction:
-				evaluatedArgs := make([]Value, 0)
+			case lisptype.InterpretedFunction:
+				evaluatedArgs := make([]lisptype.Value, 0)
 				for _, arg := range arguments {
-					var evaluatedArg Value
+					var evaluatedArg lisptype.Value
 					evaluatedArg, err = Eval(arg, frame)
 					if err != nil {
 						return nilValue, passUpError(err)
@@ -682,13 +683,13 @@ func Eval(toEvaluate Value, frame *Frame) (Value, error) {
 					return nilValue, passUpError(err)
 				}
 				return result, nil
-			case CompiledFunction:
-				instructions := firstThing.Cdr.Value.([]Instruction)
-				workspace := make([]Value, len(instructions)/2+1)
-				if instructions[0].class == VarArgFlag {
-					var evaluatedArgs []Value
+			case lisptype.CompiledFunction:
+				instructions := firstThing.Cdr.Value.([]lisptype.Instruction)
+				workspace := make([]lisptype.Value, len(instructions)/2+1)
+				if instructions[0].Class == lisptype.VarArgFlag {
+					var evaluatedArgs []lisptype.Value
 					for _, arg := range arguments {
-						var evaluatedArg Value
+						var evaluatedArg lisptype.Value
 						evaluatedArg, err = Eval(arg, frame)
 						if err != nil {
 							return nilValue, passUpError(err)
@@ -698,7 +699,7 @@ func Eval(toEvaluate Value, frame *Frame) (Value, error) {
 					workspace[0] = toList(evaluatedArgs)
 				} else {
 					for i, arg := range arguments {
-						var evaluatedArg Value
+						var evaluatedArg lisptype.Value
 						evaluatedArg, err = Eval(arg, frame)
 						if err != nil {
 							return nilValue, passUpError(err)
@@ -707,12 +708,12 @@ func Eval(toEvaluate Value, frame *Frame) (Value, error) {
 					}
 				}
 
-				newStackFrame := StackFrame{
-					workspace:           workspace,
-					callerIsInterpreted: true,
-					returnLine:          0,
-					callerCode:          []Instruction{},
-					callerEnv:           Frame{},
+				newStackFrame := lisptype.StackFrame{
+					Workspace:           workspace,
+					CallerIsInterpreted: true,
+					ReturnLine:          0,
+					CallerCode:          []lisptype.Instruction{},
+					CallerEnv:           lisptype.Frame{},
 				}
 				stack = append(stack, newStackFrame)
 				result, err := exec(firstThing)

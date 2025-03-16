@@ -1,4 +1,4 @@
-package main
+package lisptype
 
 // this is the type enum for values
 type ValueType int

@@ -1,20 +1,21 @@
-package main
+package lisp
 
 import (
 	"errors"
 	"fmt"
+	lisptype "test/m/lisp_type"
 )
 
 // reads a list in and creates a new value for it
 // read list will call read repeatedly as it traverses
 // its contents, until it hits a closing parens.
-func readList(s string) (string, Value, error) {
-	thisList := make([]Value, 0)
+func readList(s string) (string, lisptype.Value, error) {
+	thisList := make([]lisptype.Value, 0)
 	remainingString := s
 	appendAtom := false
 	thingsToRightOfDot := -1
 	for remainingString != "" {
-		var nextValue Value
+		var nextValue lisptype.Value
 		var err error
 		remainingString, nextValue, err = Read(remainingString)
 		if err != nil {
@@ -26,15 +27,15 @@ func readList(s string) (string, Value, error) {
 				// the one whose cdr is null. Replace this with the
 				// car of that cons cell.
 				if appendAtom && thingsToRightOfDot != 1 {
-					return remainingString, Value{
+					return remainingString, lisptype.Value{
 						Car:   nil,
 						Cdr:   nil,
-						Type:  Nil,
+						Type:  lisptype.Nil,
 						Value: nil,
 					}, errors.New("improperly placed . ")
 				}
 				if appendAtom {
-					for listTraverser.Cdr.Type == ConsCell {
+					for listTraverser.Cdr.Type == lisptype.ConsCell {
 						listTraverser = listTraverser.Cdr
 					}
 					listTraverser.Value = listTraverser.Car.Value
@@ -49,20 +50,20 @@ func readList(s string) (string, Value, error) {
 				// we're going to generate an improperly placed . error
 			} else if err.Error() == "unexpected '.'" {
 				if appendAtom {
-					return remainingString, Value{
+					return remainingString, lisptype.Value{
 						Car:   nil,
 						Cdr:   nil,
-						Type:  Nil,
+						Type:  lisptype.Nil,
 						Value: nil,
 					}, errors.New("improperly placed . ")
 				}
 				appendAtom = true
 				// else this isn't an error we can catch, so propogate it up
 			} else {
-				return remainingString, Value{
+				return remainingString, lisptype.Value{
 					Car:   nil,
 					Cdr:   nil,
-					Type:  Nil,
+					Type:  lisptype.Nil,
 					Value: nil,
 				}, err
 			}
@@ -71,10 +72,10 @@ func readList(s string) (string, Value, error) {
 			thingsToRightOfDot++
 		}
 		if thingsToRightOfDot > 1 {
-			return remainingString, Value{
+			return remainingString, lisptype.Value{
 				Car:   nil,
 				Cdr:   nil,
-				Type:  Nil,
+				Type:  lisptype.Nil,
 				Value: nil,
 			}, errors.New("improperly placed . ")
 		}
@@ -82,16 +83,16 @@ func readList(s string) (string, Value, error) {
 	}
 	// if we didnt return early and hit the end of the string,
 	// then there was no matching closing parens and we need to generate an error
-	return "", Value{
+	return "", lisptype.Value{
 		Car:   nil,
 		Cdr:   nil,
-		Type:  Nil,
+		Type:  lisptype.Nil,
 		Value: nil,
 	}, errors.New("could not find matching closing parens")
 }
 
 // read a string in and create a new atom for it
-func readString(s string) (string, Value, error) {
+func readString(s string) (string, lisptype.Value, error) {
 	escape := false
 	result := ""
 	for i := range s {
@@ -113,10 +114,10 @@ func readString(s string) (string, Value, error) {
 			if s[i] == '\\' {
 				escape = true
 			} else if s[i] == '"' {
-				return s[i+1:], Value{
+				return s[i+1:], lisptype.Value{
 					Car:   nil,
 					Cdr:   nil,
-					Type:  String,
+					Type:  lisptype.String,
 					Value: result,
 				}, nil
 			} else {
@@ -124,41 +125,41 @@ func readString(s string) (string, Value, error) {
 			}
 		}
 	}
-	return "", Value{
+	return "", lisptype.Value{
 		Car:   nil,
 		Cdr:   nil,
-		Type:  Nil,
+		Type:  lisptype.Nil,
 		Value: nil,
 	}, errors.New("could not find matching closing double quote")
 }
 
 // read a number in and create a new symbol for it
-func readNumber(s string) (string, Value, error) {
+func readNumber(s string) (string, lisptype.Value, error) {
 	var result float64
 	fmt.Sscanf(s, "%f", &result)
 	i := 0
 	for i < len(s) && (('0' <= s[i] && s[i] <= '9' || s[i] == '.') || (i == 0 && s[i] == '-')) {
 		i++
 	}
-	return s[i:], Value{
+	return s[i:], lisptype.Value{
 		Car:   nil,
 		Cdr:   nil,
-		Type:  Number,
+		Type:  lisptype.Number,
 		Value: result,
 	}, nil
 }
 
 // reads a symbol in and creates a new atom for it
-func readSymbol(s string) (string, Value, error) {
+func readSymbol(s string) (string, lisptype.Value, error) {
 	result := ""
 	i := 0
 	for ; i < len(s) && s[i] != ' ' && s[i] != '\t' && s[i] != '\n' && s[i] != '(' && s[i] != ')'; i++ {
 		result += string(s[i])
 	}
-	return s[i:], Value{
+	return s[i:], lisptype.Value{
 		Car:   nil,
 		Cdr:   nil,
-		Type:  Symbol,
+		Type:  lisptype.Symbol,
 		Value: result,
 	}, nil
 }
@@ -170,7 +171,7 @@ func readSymbol(s string) (string, Value, error) {
 // the string returned is the remainder of it after the read was done
 // sometimes read may need to be applied multiple times to fully ingest a string,
 // since read only consumes the first s-expression that it encounters.
-func Read(s string) (string, Value, error) {
+func Read(s string) (string, lisptype.Value, error) {
 	// lists start with open paren
 	if s[0] == '(' {
 		return readList(s[1:])
@@ -190,35 +191,35 @@ func Read(s string) (string, Value, error) {
 			skipForward++
 		}
 		if skipForward == len(s) {
-			return "", Value{
+			return "", lisptype.Value{
 				Car:   nil,
 				Cdr:   nil,
-				Type:  Nil,
+				Type:  lisptype.Nil,
 				Value: nil,
 			}, nil
 		}
 		return Read(s[skipForward:])
 	} else if s[0] == '\'' {
 		remaining, beingQuoted, err := Read(s[1:])
-		return remaining, Value{
-			Car: &Value{
+		return remaining, lisptype.Value{
+			Car: &lisptype.Value{
 				Car:   nil,
 				Cdr:   nil,
-				Type:  Symbol,
+				Type:  lisptype.Symbol,
 				Value: "quote",
 			},
-			Cdr: &Value{
+			Cdr: &lisptype.Value{
 				Car: &beingQuoted,
-				Cdr: &Value{
+				Cdr: &lisptype.Value{
 					Car:   nil,
 					Cdr:   nil,
-					Type:  Nil,
+					Type:  lisptype.Nil,
 					Value: nil,
 				},
-				Type:  ConsCell,
+				Type:  lisptype.ConsCell,
 				Value: nil,
 			},
-			Type:  ConsCell,
+			Type:  lisptype.ConsCell,
 			Value: nil,
 		}, err
 		// skip over comments
@@ -228,36 +229,36 @@ func Read(s string) (string, Value, error) {
 			skipForward++
 		}
 		if skipForward == len(s) {
-			return "", Value{
+			return "", lisptype.Value{
 				Car:   nil,
 				Cdr:   nil,
-				Type:  Nil,
+				Type:  lisptype.Nil,
 				Value: nil,
 			}, nil
 		}
 		return Read(s[skipForward:])
 		// true and false have special representations
 	} else if len(s) >= 2 && s[0:2] == "#f" {
-		return s[2:], Value{
+		return s[2:], lisptype.Value{
 			Car:   nil,
 			Cdr:   nil,
-			Type:  Boolean,
+			Type:  lisptype.Boolean,
 			Value: false,
 		}, nil
 	} else if len(s) >= 2 && s[0:2] == "#t" {
-		return s[2:], Value{
+		return s[2:], lisptype.Value{
 			Car:   nil,
 			Cdr:   nil,
-			Type:  Boolean,
+			Type:  lisptype.Boolean,
 			Value: true,
 		}, nil
 		// . is the marker for a cons pair, which means the thing to the right
 		// is the cdr of the cons cell, not nil like it would be for a standard list
 	} else if s[0] == '.' {
-		return s[1:], Value{
+		return s[1:], lisptype.Value{
 			Car:   nil,
 			Cdr:   nil,
-			Type:  Nil,
+			Type:  lisptype.Nil,
 			Value: nil,
 		}, errors.New("unexpected '.'")
 	} else if 1 == 0 {
@@ -267,10 +268,10 @@ func Read(s string) (string, Value, error) {
 		// if its terminating a list, then read list will catch it
 		// and the error wont bubble to the user.
 	} else if s[0] == ')' {
-		return s[1:], Value{
+		return s[1:], lisptype.Value{
 			Car:   nil,
 			Cdr:   nil,
-			Type:  Nil,
+			Type:  lisptype.Nil,
 			Value: nil,
 		}, errors.New("unexpected ')'")
 	}
