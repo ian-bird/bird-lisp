@@ -5,6 +5,8 @@ The functions currently exposed to the go environment are:
 * Read: takes an s-expression formatted string and returns  lisp `Value`, and an error type.
 * Eval: takes a value and a pointer to a "Frame", the terminology used for lisp environments. It returns the result of  evaluating the value (i.e., the cons cell) as another value, and has the side effect of mutating the environment also passed in. It also returns an error type.
 * Print: takes a value and returns an s-expression formatted string
+* NewTopLevelFrame: generates a new global env with all special forms bound to it
+* LoadFile: takes a file path and evaluates all the s-expressions in it, and returns an updated environment
 
 I've written out a repl file that loads the standard library and a compiled version of it. The standard library has a lot of commonly used functions and additionally a fully working compiler for the language, which targets a bespoke virtual machine also bundled with the code. Compiling functions results in a 10x speedup for regular code, and an *up to 40x speedup* for code using lots of macros. Average speedup is around 20x. the compiler can be invoked by calling compile on a quoted lambda form, or by defining a function with def-comp. You can also use to-assembly to inspect the generated code without having it converted to structured machine code and placed in a compiledFunction object.
 
